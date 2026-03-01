@@ -1,0 +1,68 @@
+# ============================================================
+# ChainPort Gateway — .gitignore
+# ============================================================
+# ------- proxy core ---------
+bin/
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+*.spec
+
+# ---------- 虛擬環境 ----------
+venv/
+.venv/
+env/
+.env/
+
+# ---------- IDE ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# ---------- 測試 / 覆蓋率 ----------
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ---------- 基建操作系統 ----------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+*.lnk
+
+# ---------- 本專案特有 ----------
+# 運行時自動產生的狀態檔
+state.json
+
+# 核心引擎產生的配置檔（由程式自動生成，不需版控）
+singbox_config.json
+xray_config.json
+mihomo_config.yaml
+
+# 核心執行檔（不該放進 repo）
+sing-box.exe
+xray.exe
+mihomo.exe
+
+# PyInstaller 打包產物
+*.manifest
+*.exe
+
+# ---------- Log ----------
+*.log

@@ -1,0 +1,9 @@
+- node_id (uuid)
+- name
+- type (socks/http/ss/vmess/vless/trojan/unknown)
+- server
+- port
+- username/password（可空）
+- tls (bool 可空)
+- sni/alpn/path/host/header/udp（可空）
+- raw (dict 原始資料)

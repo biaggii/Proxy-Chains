@@ -1,0 +1,211 @@
+{
+  "log": {
+    "level": "error",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "remote_dns",
+        "type": "udp",
+        "server": "8.8.8.8"
+      }
+    ],
+    "final": "remote_dns",
+    "strategy": "ipv4_only",
+    "independent_cache": true
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "IN_20001",
+      "listen": "127.0.0.1",
+      "listen_port": 20001,
+      "sniff": true
+    },
+    {
+      "type": "mixed",
+      "tag": "IN_20002",
+      "listen": "127.0.0.1",
+      "listen_port": 20002,
+      "sniff": true
+    },
+    {
+      "type": "mixed",
+      "tag": "IN_20003",
+      "listen": "127.0.0.1",
+      "listen_port": 20003,
+      "sniff": true
+    },
+    {
+      "type": "mixed",
+      "tag": "IN_20004",
+      "listen": "127.0.0.1",
+      "listen_port": 20004,
+      "sniff": true
+    },
+    {
+      "type": "mixed",
+      "tag": "IN_21001",
+      "listen": "127.0.0.1",
+      "listen_port": 21001,
+      "sniff": true
+    },
+    {
+      "type": "mixed",
+      "tag": "IN_21002",
+      "listen": "127.0.0.1",
+      "listen_port": 21002,
+      "sniff": true
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "shadowsocks",
+      "tag": "CHAIN_57ebfd38_H1",
+      "server": "103.219.84.153",
+      "server_port": 37115,
+      "method": "aes-256-gcm",
+      "password": "DigTuTMIhZqR2x0z"
+    },
+    {
+      "type": "socks",
+      "tag": "CHAIN_57ebfd38_H2",
+      "server": "9.142.194.140",
+      "server_port": 6808,
+      "version": "5",
+      "username": "blqtblgd",
+      "password": "re4b15c72pcq",
+      "detour": "CHAIN_57ebfd38_H1"
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "CHAIN_680d912a_H1",
+      "server": "103.219.84.153",
+      "server_port": 37685,
+      "method": "aes-256-gcm",
+      "password": "DigTuTMIhZqR2x0z"
+    },
+    {
+      "type": "socks",
+      "tag": "CHAIN_680d912a_H2",
+      "server": "168.158.184.150",
+      "server_port": 6161,
+      "version": "5",
+      "username": "kniln345345",
+      "password": "hds1drixm",
+      "detour": "CHAIN_680d912a_H1"
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "CHAIN_af000036_H1",
+      "server": "103.219.84.153",
+      "server_port": 37687,
+      "method": "aes-256-gcm",
+      "password": "DigTuTMIhZqR2x0z"
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "CHAIN_d85b978f_H1",
+      "server": "103.219.84.153",
+      "server_port": 35461,
+      "method": "aes-256-gcm",
+      "password": "DigTuTMIhZqR2x0z"
+    },
+    {
+      "type": "socks",
+      "tag": "CHAIN_d85b978f_H2",
+      "server": "207.228.7.123",
+      "server_port": 7305,
+      "version": "5",
+      "username": "blqtblgd",
+      "password": "re4b15c72pcq",
+      "detour": "CHAIN_d85b978f_H1"
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "CHAIN_a3fbdc58_H1",
+      "server": "103.219.84.153",
+      "server_port": 37686,
+      "method": "aes-256-gcm",
+      "password": "DigTuTMIhZqR2x0z"
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "CHAIN_3bbb0ac7_H1",
+      "server": "103.219.84.153",
+      "server_port": 39631,
+      "method": "aes-256-gcm",
+      "password": "DigTuTMIhZqR2x0z"
+    },
+    {
+      "type": "socks",
+      "tag": "CHAIN_3bbb0ac7_H2",
+      "server": "207.228.29.169",
+      "server_port": 5660,
+      "version": "5",
+      "username": "blqtblgd",
+      "password": "re4b15c72pcq",
+      "detour": "CHAIN_3bbb0ac7_H1"
+    },
+    {
+      "type": "direct",
+      "tag": "DIRECT"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "ip_version": 6,
+        "action": "reject"
+      },
+      {
+        "inbound": [
+          "IN_20001"
+        ],
+        "outbound": "CHAIN_680d912a_H2"
+      },
+      {
+        "inbound": [
+          "IN_20002"
+        ],
+        "outbound": "CHAIN_57ebfd38_H2"
+      },
+      {
+        "inbound": [
+          "IN_20003"
+        ],
+        "outbound": "CHAIN_3bbb0ac7_H2"
+      },
+      {
+        "inbound": [
+          "IN_20004"
+        ],
+        "outbound": "CHAIN_d85b978f_H2"
+      },
+      {
+        "inbound": [
+          "IN_21001"
+        ],
+        "outbound": "CHAIN_af000036_H1"
+      },
+      {
+        "inbound": [
+          "IN_21002"
+        ],
+        "outbound": "CHAIN_a3fbdc58_H1"
+      }
+    ],
+    "auto_detect_interface": false,
+    "final": "DIRECT"
+  },
+  "experimental": {
+    "v2ray_api": {
+      "stats": {
+        "enabled": true,
+        "inbounds": [],
+        "outbounds": []
+      }
+    }
+  }
+}

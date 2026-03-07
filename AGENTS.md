@@ -1,215 +1,201 @@
-# 🤖 AGENTS.md — AI 開發者指南
+# AGENTS.md - AI Developer Guide
 
-> 本文件供 AI 編碼助手（Copilot、Claude、Gemini 等）理解此專案的架構與慣例。
+This document gives AI coding assistants the minimum project context needed to work safely and consistently in this repository.
 
----
+## Project Overview
 
-## 📌 專案概覽
+ChainPort Gateway is a Windows desktop GUI for managing proxy routes for browsers and other applications.
 
-**ChainPort Gateway** 是一個 Windows 桌面 GUI 工具，用來管理多瀏覽器or多個applications 的代理出口(多進多出)。
+Core flow:
 
-**核心流程：**
-
-```
-訂閱 URL → 下載 → 解析成 Node → 組成 Chain → 映射到 Port → 產生核心配置 → 啟動進程
+```text
+Subscription URL -> Download -> Parse into Nodes -> Build Chains -> Bind Local Ports -> Generate Core Config -> Start Process
 ```
 
----
+## Architecture
 
-## 🏛️ 架構分層
-
-```
-┌──────────────────────────────────────────────────┐
-│                    app/ (GUI)                     │   PySide6 介面
-│  ui_main_window → 6 個 ui_pages_* 頁面           │   使用者操作
-├──────────────────────────────────────────────────┤
-│                  models/ (Data)                   │   資料結構 + JSON 持久化
-│  Node, Chain, PortMapping, Subscription, AppState │   app_state.py 管理全部
-├──────────────────────────────────────────────────┤
-│                parsers/ (Parse)                   │   訂閱解析
-│  subscription_fetcher → clash_yaml / v2rayn       │   uri_parsers 拆單行 URI
-├──────────────────────────────────────────────────┤
-│                  core/ (Engine)                   │   核心引擎適配器
-│  CoreAdapterBase → SingBox / Xray / Mihomo        │   process_runner 管進程
-└──────────────────────────────────────────────────┘
+```text
+app/     -> GUI shell and pages
+models/  -> data models and JSON persistence
+parsers/ -> subscription and URI parsing
+core/    -> core config generation and process control
 ```
 
-**依賴方向**（嚴格單向）：
+Dependency direction is one-way:
 
+```text
+app/ -> models/
+app/ -> parsers/
+app/ -> core/ -> models/
+parsers/ -> models/
+models/ -> no local package dependencies
 ```
-app/ → models/ ← parsers/
-app/ → core/ → models/
-```
 
-- `app/` 依賴 `models/`、`core/`、`parsers/`
-- `core/` 依賴 `models/`
-- `parsers/` 依賴 `models/`
-- `models/` 不依賴任何其他本地套件
+## Data Models
 
----
+| Class | File | Purpose |
+| :---- | :--- | :------ |
+| `Node` | `models/node.py` | One proxy node |
+| `Subscription` | `models/subscription.py` | One provider source |
+| `Chain` | `models/chain.py` | Ordered hop list of node ids |
+| `PortMapping` | `models/port_mapping.py` | Local port bound to a chain |
+| `AppState` | `models/app_state.py` | Global app state and persistence |
 
-## 📐 資料模型（models/）
+All models implement:
 
-| 類別           | 檔案              | 說明                                              |
-| :------------- | :---------------- | :------------------------------------------------ |
-| `Node`         | `node.py`         | 一個代理節點（vmess/vless/trojan/ss/socks5/http） |
-| `Subscription` | `subscription.py` | 一個訂閱來源（name + url + type）                 |
-| `Chain`        | `chain.py`        | 一條鏈式代理（有序的 node_id 清單）               |
-| `PortMapping`  | `port_mapping.py` | 一個端口映射（listen_port → chain_id）            |
-| `AppState`     | `app_state.py`    | 全域狀態容器 + JSON 讀寫                          |
+- `to_dict() -> dict`
+- `from_dict(dict) -> Self`
+- `__repr__() -> str`
 
-**所有 model 都實作：**
+## Core Adapters
 
-- `to_dict() → dict` — 序列化
-- `from_dict(dict) → Self` — 反序列化
-- `__repr__() → str` — debug 輸出
-
----
-
-## ⚙️ 核心適配器（core/）
-
-抽象介面 `CoreAdapterBase` 定義：
+`core/core_adapter_base.py` defines:
 
 ```python
 class CoreAdapterBase(ABC):
-    def generate_config(app_state) -> (config_text, config_path)
+    def generate_config(app_state) -> tuple[str, str]
     def get_check_command(config_path, exe_path) -> list[str]
     def get_start_command(config_path, exe_path) -> list[str]
 ```
 
-**三個實作：**
+Current implementations:
 
-| Adapter          | 鏈式欄位            | 配置格式 |
-| :--------------- | :------------------ | :------- |
-| `SingBoxAdapter` | `detour`            | JSON     |
-| `XrayAdapter`    | `proxySettings.tag` | JSON     |
-| `MihomoAdapter`  | `dialer-proxy`      | YAML     |
+| Adapter | Chain Field | Config Format |
+| :------ | :---------- | :------------ |
+| `SingBoxAdapter` | `detour` | JSON |
+| `XrayAdapter` | `proxySettings.tag` | JSON |
+| `MihomoAdapter` | `dialer-proxy` | YAML |
 
-**鏈式 outbound 命名規則：**
+Chain outbound naming rule:
 
-```
+```text
 CHAIN_{chain_id}_H{hop_number}
 ```
 
-例如 chain_id=`c1`，3 跳：`CHAIN_c1_H1`, `CHAIN_c1_H2`, `CHAIN_c1_H3`
+## Parsers
 
----
-
-## 🔍 解析器（parsers/）
-
-**入口函式：**
+Primary entry points:
 
 ```python
-# 下載 + 自動偵測 + 解析
 nodes, errors = fetch_and_parse(subscription)
-
-# 只解析文字（測試用）
 nodes, errors = parse_text_only(raw_text, sub_name, sub_type)
 ```
 
-**自動偵測邏輯：**
+Auto-detection rules:
 
-- 如果文字包含 `proxies:` → Clash YAML
-- 否則 → v2rayN（先嘗試 base64 解碼）
+- If the content contains `proxies:`, treat it as Clash YAML
+- Otherwise treat it as v2rayN text, with optional base64 decoding
 
-**URI 解析（uri_parsers.py）支援：**
+Supported URI schemes in `parsers/uri_parsers.py`:
 
 `vmess://`, `vless://`, `trojan://`, `ss://`, `socks5://`, `socks://`, `http://`, `https://`
 
-**錯誤回報格式：**
+Parser errors should be actionable and include location plus reason.
 
-```
-第 3 行解析失敗: 'vmess://xxxxx...' → 原因: Base64 解碼失敗
-```
+## GUI Pages
 
----
+| Tab | File | Responsibility |
+| :-- | :--- | :------------- |
+| Home | `app/ui_pages_dashboard.py` | Readiness, quick actions, metrics, and next-step guidance |
+| Subscriptions | `app/ui_pages_subscriptions.py` | Provider source management and refresh |
+| Nodes | `app/ui_pages_nodes.py` | Node review, manual import, URI copy/paste, and chain helpers |
+| Routing | `app/ui_pages_routing.py` | Combined routing workspace that hosts Chains and Ports |
+| Logs | `app/ui_pages_logs.py` | Live stdout/stderr and validation output |
+| Settings | `app/ui_pages_settings.py` | Core executable, startup behavior, advanced options, and profile import/export |
 
-## 🖥️ GUI 頁面（app/）
+Nested routing pages:
 
-| 頁面          | 檔案                        | 功能                               |
-| :------------ | :-------------------------- | :--------------------------------- |
-| Subscriptions | `ui_pages_subscriptions.py` | 新增/刪除/更新訂閱                 |
-| Nodes         | `ui_pages_nodes.py`         | 顯示節點 + 搜尋篩選 + 手動新增     |
-| Chains        | `ui_pages_chains.py`        | 建立/編輯 chain + Wrap Socks5      |
-| Ports         | `ui_pages_ports.py`         | 端口映射 + 批量建立 + 複製代理設定 |
-| Logs          | `ui_pages_logs.py`          | 核心 stdout/stderr 即時顯示        |
-| Settings      | `ui_pages_settings.py`      | 核心類型/路徑設定                  |
+| Page | File | Responsibility |
+| :--- | :--- | :------------- |
+| Chains | `app/ui_pages_chains.py` | Create and edit chains |
+| Ports | `app/ui_pages_ports.py` | Manage port bindings and the dedicated TUN route |
 
-**主窗口 `ui_main_window.py`：**
+`app/ui_main_window.py` is the shell for the whole app:
 
-- 用 `QTabWidget` 組織 6 頁
-- 底部永遠有 `Apply` / `Start` / `Stop` 三顆按鈕
-- 跨執行緒 log 用 `LogBridge(QObject)` + `Signal` 安全傳送
-- 任何頁面 `data_changed` 信號觸發時自動 `save_to_file()`
+- Organizes the six top-level tabs with `QTabWidget`
+- Keeps `Apply`, `Run as Admin`, `Start`, and `Stop` visible globally
+- Runs readiness checks and updates the Home dashboard plus action bar state
+- Bridges background process logs into the GUI thread with `LogBridge(QObject)` and `Signal`
+- Saves `state.json` whenever a page emits `data_changed`
 
----
+## Language And UI Policy
 
-## 📏 編碼慣例
+- All user-facing UI text must be English
+- All dialogs, notifications, runtime logs, parser error messages, and generated default display names must be English
+- New or modified comments and docstrings should be English
+- Keep the Home dashboard, Routing workspace, and global action bar terminology consistent across UI and docs
 
-### 命名
+Preferred product terms:
 
-- 變數名：`snake_case`，語義清楚（`airport_node_list`, `listen_port_number`）
-- 常數：`UPPER_SNAKE_CASE`（`NODE_TYPE_VMESS`, `SUB_TYPE_CLASH`）
-- 類別名：`PascalCase`（`AppState`, `SingBoxAdapter`）
+- Use `source` or `subscription source` instead of untranslated provider wording
+- Use `binding` or `port binding` when describing the UI
+- Use `Routing` for the combined Chains plus Ports workspace
 
-### 註解
+## Coding Conventions
 
-- 所有註解使用 **繁體中文**
-- 每個函式都有 docstring 說明用途、參數、回傳值
-- 重要邏輯步驟用 `# --- 第 N 步 ---` 標記
+### Naming
 
-### 函式
+- Variables use `snake_case`
+- Constants use `UPPER_SNAKE_CASE`
+- Classes use `PascalCase`
 
-- 每個函式 **≤ 40 行**
-- 每個檔案只做一件事
-- 所有函式都有 **type hints**
+### Functions
 
-### 錯誤處理
+- Prefer functions at or under 40 lines when practical
+- Keep each file focused on one responsibility
+- Add type hints to all functions
 
-- 解析錯誤不拋例外，收集到 `error_messages: list[str]` 回傳
-- 錯誤訊息要包含：位置（行號/索引）+ 內容預覽 + 具體原因
-- `fetch_and_parse()` 永不拋例外，所有錯誤都放進回傳值
+### Error Handling
 
----
+- Parsing should collect recoverable errors into `error_messages: list[str]`
+- Error messages should include location, content preview, and a concrete reason when possible
+- `fetch_and_parse()` should not raise for normal parsing failures; return errors instead
 
-## 🧪 測試
+## Testing
+
+Primary verification commands:
 
 ```bash
-python -m pytest tests/ -v
+python -m pytest tests/ -q
+python -m compileall app core models parsers
 ```
 
-| 測試檔                   | 數量 | 覆蓋範圍                                           |
-| :----------------------- | :--- | :------------------------------------------------- |
-| `test_clash_parser.py`   | 11   | YAML 解析、各協議欄位、邊界案例                    |
-| `test_v2rayn_parser.py`  | 15   | 6 種 URI、base64 自動偵測、混合行                  |
-| `test_chain_building.py` | 9    | Node 基本操作、chain 順序、detour tag、Wrap Socks5 |
+Recommended Qt smoke test for UI-impacting changes:
 
----
+```bash
+set QT_QPA_PLATFORM=offscreen
+python -c "from PySide6.QtWidgets import QApplication; from models.app_state import AppState; from app.ui_main_window import MainWindow; app = QApplication([]); MainWindow(AppState()); print('ok')"
+```
 
-## 🔧 新增協議/核心的步驟
+Important coverage areas:
 
-### 新增一個 URI 協議
+- `tests/test_clash_parser.py`
+- `tests/test_v2rayn_parser.py`
+- `tests/test_chain_building.py`
+- `tests/test_singbox_adapter.py`
 
-1. 在 `parsers/uri_parsers.py` 新增 `parse_xxx_uri()` 函式
-2. 在 `parse_single_uri()` 加入對應的 `elif` 分支
-3. 在 `models/node.py` 新增 `NODE_TYPE_XXX` 常數
-4. 在三個 adapter 中新增 `_xxx_outbound()` 轉換函式
-5. 在 `tests/test_v2rayn_parser.py` 新增測試案例
+## Adding Support
 
-### 新增一個核心引擎
+### Add a New URI Protocol
 
-1. 在 `core/` 新增 `xxx_adapter.py`，繼承 `CoreAdapterBase`
-2. 實作 `generate_config()`、`get_check_command()`、`get_start_command()`
-3. 在 `app/ui_main_window.py` 的 `_get_current_adapter()` 加入分支
-4. 在 `app/ui_pages_settings.py` 的下拉選單加入選項
+1. Add `parse_xxx_uri()` in `parsers/uri_parsers.py`
+2. Add a matching branch in `parse_single_uri()`
+3. Add a node type constant in `models/node.py`
+4. Add outbound support in each relevant adapter
+5. Add tests in `tests/test_v2rayn_parser.py`
 
----
+### Add a New Core Engine
 
-## 📎 重要檔案路徑
+1. Add `core/xxx_adapter.py` and inherit from `CoreAdapterBase`
+2. Implement `generate_config()`, `get_check_command()`, and `get_start_command()`
+3. Add the adapter branch in `app/ui_main_window.py`
+4. Add the UI option in `app/ui_pages_settings.py`
 
-| 用途          | 路徑                    |
-| :------------ | :---------------------- |
-| 狀態儲存      | `./state.json`          |
-| sing-box 配置 | `./singbox_config.json` |
-| Xray 配置     | `./xray_config.json`    |
-| Mihomo 配置   | `./mihomo_config.yaml`  |
+## Important Paths
+
+| Purpose | Path |
+| :------ | :--- |
+| App state | `./state.json` |
+| sing-box config | `./singbox_config.json` |
+| Xray config | `./xray_config.json` |
+| Mihomo config | `./mihomo_config.yaml` |

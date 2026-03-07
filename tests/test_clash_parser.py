@@ -157,7 +157,7 @@ class TestClashYamlParser:
         nodes, errors = parse_clash_yaml(SAMPLE_EMPTY_PROXIES, "空訂閱")
         assert len(nodes) == 0
         assert len(errors) == 1
-        assert "空的" in errors[0]
+        assert "empty" in errors[0].lower()
 
     def test_no_proxies_key(self):
         """沒有 proxies key 應該回報錯誤"""

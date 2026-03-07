@@ -80,13 +80,13 @@ def parse_v2rayn_subscription(
             # 記下錯誤：行號 + 前 60 字 + 原因
             preview = line_text[:60]
             error_messages.append(
-                f"第 {line_number} 行解析失敗: '{preview}...' → 原因: {err}"
+                f"Failed to parse line {line_number}: '{preview}...' -> {err}"
             )
 
     # --- 第 4 步：如果完全沒有節點，額外提示 ---
     if len(good_nodes) == 0 and len(error_messages) == 0:
         error_messages.append(
-            f"訂閱 '{source_sub_name}' 完全沒有找到可解析的分享鏈"
+            f"No parseable proxy URIs found in subscription '{source_sub_name}'"
         )
 
     return good_nodes, error_messages

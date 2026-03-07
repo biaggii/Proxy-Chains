@@ -12,6 +12,7 @@ import pytest
 
 from parsers.v2rayn_parser import parse_v2rayn_subscription
 from parsers.uri_parsers import (
+    build_node_uri,
     parse_vmess_uri,
     parse_vless_uri,
     parse_trojan_uri,
@@ -20,6 +21,7 @@ from parsers.uri_parsers import (
     parse_http_uri,
     parse_single_uri,
 )
+from models.node import Node
 from models.node import (
     NODE_TYPE_VMESS,
     NODE_TYPE_VLESS,
@@ -183,7 +185,7 @@ class TestUriParsers:
 
     def test_unknown_scheme_raises(self):
         """不認識的 URI 前綴應該拋出 ValueError"""
-        with pytest.raises(ValueError, match="無法辨識"):
+        with pytest.raises(ValueError, match="Unknown URI scheme"):
             parse_single_uri("ftp://something", "test")
 
     def test_vmess_missing_uuid_raises(self):
@@ -193,6 +195,58 @@ class TestUriParsers:
         encoded = base64.b64encode(json.dumps(bad_json).encode()).decode()
         with pytest.raises(ValueError, match="UUID"):
             parse_vmess_uri(f"vmess://{encoded}")
+
+    def test_build_node_uri_round_trip_for_vless_without_raw_uri(self):
+        """Nodes copied from the UI should export a valid VLESS share URI from current fields."""
+        node = Node(
+            name="Round Trip VLESS",
+            node_type=NODE_TYPE_VLESS,
+            server="us.example.com",
+            port=443,
+            uuid_str="aaaaaaaa-1111-2222-3333-444444444444",
+            tls_enabled=True,
+            sni="us.example.com",
+            host="cdn.example.com",
+            path="/vless-ws",
+            network="ws",
+            flow="xtls-rprx-vision",
+            alpn=["h2", "http/1.1"],
+        )
+
+        uri = build_node_uri(node)
+        reparsed = parse_single_uri(uri, "clipboard")
+
+        assert reparsed.node_type == NODE_TYPE_VLESS
+        assert reparsed.name == node.name
+        assert reparsed.server == node.server
+        assert reparsed.port == node.port
+        assert reparsed.uuid_str == node.uuid_str
+        assert reparsed.host == node.host
+        assert reparsed.path == node.path
+        assert reparsed.sni == node.sni
+        assert reparsed.flow == node.flow
+        assert reparsed.alpn == node.alpn
+
+    def test_build_node_uri_round_trip_for_shadowsocks_without_raw_uri(self):
+        """Shadowsocks nodes without stored raw URIs should still copy as valid share links."""
+        node = Node(
+            name="Round Trip SS",
+            node_type=NODE_TYPE_SS,
+            server="sg.example.com",
+            port=8388,
+            encryption="aes-256-gcm",
+            password="my-ss-password",
+        )
+
+        uri = build_node_uri(node)
+        reparsed = parse_single_uri(uri, "clipboard")
+
+        assert reparsed.node_type == NODE_TYPE_SS
+        assert reparsed.name == node.name
+        assert reparsed.server == node.server
+        assert reparsed.port == node.port
+        assert reparsed.encryption == node.encryption
+        assert reparsed.password == node.password
 
 
 # ============================================================
@@ -236,7 +290,7 @@ class TestV2raynParser:
         nodes, errors = parse_v2rayn_subscription("", "空訂閱")
         assert len(nodes) == 0
         assert len(errors) >= 1
-        assert "沒有找到" in errors[0]
+        assert "No parseable proxy URIs found" in errors[0]
 
     def test_mixed_valid_and_invalid_lines(self):
         """混合合法和不合法的行，合法的要解析成功，不合法的要回報錯誤"""

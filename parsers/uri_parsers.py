@@ -41,7 +41,7 @@ def _safe_base64_decode(encoded_text: str) -> str:
         raw_bytes = base64.b64decode(encoded_text)
         return raw_bytes.decode("utf-8", errors="replace")
     except Exception as err:
-        raise ValueError(f"Base64 解碼失敗: {err}")
+        raise ValueError(f"Base64 decode failed: {err}")
 
 
 def _parse_int_safe(value: str, field_name: str) -> int:
@@ -49,7 +49,25 @@ def _parse_int_safe(value: str, field_name: str) -> int:
     try:
         return int(value)
     except (ValueError, TypeError):
-        raise ValueError(f"欄位 '{field_name}' 無法轉成數字: '{value}'")
+        raise ValueError(f"Field '{field_name}' is not a valid integer: '{value}'")
+
+
+def _format_host_port(host: str, port: int) -> str:
+    """Format host:port, wrapping bare IPv6 addresses in brackets."""
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]:{port}"
+    return f"{host}:{port}"
+
+
+def _encode_fragment(text: str) -> str:
+    """Encode a URI fragment while keeping it human-readable."""
+    return urllib.parse.quote(text, safe="")
+
+
+def _encode_query(params: dict[str, str]) -> str:
+    """Encode a query string while dropping empty values."""
+    filtered = {key: value for key, value in params.items() if value not in ("", None)}
+    return urllib.parse.urlencode(filtered, quote_via=urllib.parse.quote)
 
 
 # ============================================================
@@ -72,10 +90,10 @@ def parse_vmess_uri(uri: str, source_sub: str = "") -> Node:
     try:
         vmess_json = json.loads(decoded_text)
     except json.JSONDecodeError as err:
-        raise ValueError(f"vmess:// 的 base64 解碼後不是合法 JSON: {err}")
+        raise ValueError(f"vmess:// base64 payload is not valid JSON: {err}")
 
     # 取出各欄位（容錯：用 get 並給預設值）
-    node_name = str(vmess_json.get("ps", "vmess 節點"))
+    node_name = str(vmess_json.get("ps", "VMess Node"))
     server_address = str(vmess_json.get("add", ""))
     server_port = _parse_int_safe(vmess_json.get("port", 0), "port")
     node_uuid = str(vmess_json.get("id", ""))
@@ -86,12 +104,19 @@ def parse_vmess_uri(uri: str, source_sub: str = "") -> Node:
     host_value = str(vmess_json.get("host", ""))
     path_value = str(vmess_json.get("path", ""))
     security_value = str(vmess_json.get("scy", "auto"))
+    alpn_raw = vmess_json.get("alpn")
+    if isinstance(alpn_raw, list):
+        alpn_list = [str(item) for item in alpn_raw if str(item).strip()]
+    elif isinstance(alpn_raw, str) and alpn_raw.strip():
+        alpn_list = [item.strip() for item in alpn_raw.split(",") if item.strip()]
+    else:
+        alpn_list = None
 
     # 檢查必要欄位
     if not server_address:
-        raise ValueError("vmess:// 缺少 'add'（伺服器地址）")
+        raise ValueError("vmess:// is missing 'add' (server address)")
     if not node_uuid:
-        raise ValueError("vmess:// 缺少 'id'（UUID）")
+        raise ValueError("vmess:// is missing 'id' (UUID)")
 
     # 判斷 TLS 是否啟用
     is_tls = tls_value.lower() in ("tls", "true", "1")
@@ -105,6 +130,7 @@ def parse_vmess_uri(uri: str, source_sub: str = "") -> Node:
         alter_id=alter_id_value,
         tls_enabled=is_tls,
         sni=sni_value if sni_value else None,
+        alpn=alpn_list,
         host=host_value if host_value else None,
         path=path_value if path_value else None,
         network=network_type,
@@ -132,13 +158,13 @@ def parse_vless_uri(uri: str, source_sub: str = "") -> Node:
         node_name = urllib.parse.unquote(fragment)
     else:
         main_part = without_scheme
-        node_name = "vless 節點"
+        node_name = "VLESS Node"
 
     # 拆 userinfo@host:port?query
     # userinfo 就是 UUID
     at_index = main_part.find("@")
     if at_index < 0:
-        raise ValueError("vless:// 格式錯誤：找不到 '@'")
+        raise ValueError("Invalid vless:// URI: missing '@'")
 
     user_info = main_part[:at_index]    # UUID
     rest = main_part[at_index + 1:]      # host:port?query
@@ -209,12 +235,12 @@ def parse_trojan_uri(uri: str, source_sub: str = "") -> Node:
         node_name = urllib.parse.unquote(fragment)
     else:
         main_part = without_scheme
-        node_name = "trojan 節點"
+        node_name = "Trojan Node"
 
     # 拆 password@host:port?query
     at_index = main_part.find("@")
     if at_index < 0:
-        raise ValueError("trojan:// 格式錯誤：找不到 '@'")
+        raise ValueError("Invalid trojan:// URI: missing '@'")
 
     password_value = urllib.parse.unquote(main_part[:at_index])
     rest = main_part[at_index + 1:]
@@ -279,7 +305,7 @@ def parse_ss_uri(uri: str, source_sub: str = "") -> Node:
         node_name = urllib.parse.unquote(fragment)
     else:
         main_part = without_scheme
-        node_name = "ss 節點"
+        node_name = "Shadowsocks Node"
 
     # 嘗試判斷是哪種格式
     if "@" in main_part:
@@ -288,7 +314,9 @@ def parse_ss_uri(uri: str, source_sub: str = "") -> Node:
         decoded_user_info = _safe_base64_decode(encoded_part)
         # decoded_user_info 格式：method:password
         if ":" not in decoded_user_info:
-            raise ValueError(f"ss:// 格式錯誤：解碼後找不到 'method:password'，得到: '{decoded_user_info[:60]}'")
+            raise ValueError(
+                f"Invalid ss:// URI: decoded credentials do not contain 'method:password', got '{decoded_user_info[:60]}'"
+            )
         method_value, password_value = decoded_user_info.split(":", 1)
     else:
         # 格式 B：整段 base64
@@ -296,11 +324,11 @@ def parse_ss_uri(uri: str, source_sub: str = "") -> Node:
         # 格式：method:password@server:port
         at_index = decoded_all.rfind("@")
         if at_index < 0:
-            raise ValueError(f"ss:// 格式錯誤：解碼後找不到 '@'，得到: '{decoded_all[:60]}'")
+            raise ValueError(f"Invalid ss:// URI: decoded payload is missing '@', got '{decoded_all[:60]}'")
         user_info_part = decoded_all[:at_index]
         host_port_str = decoded_all[at_index + 1:]
         if ":" not in user_info_part:
-            raise ValueError(f"ss:// 格式錯誤：解碼後找不到 'method:password'")
+            raise ValueError("Invalid ss:// URI: decoded credentials do not contain 'method:password'")
         method_value, password_value = user_info_part.split(":", 1)
 
     # 去掉 host_port_str 中可能的 query / plugins (例如 /?group=... 或 ?plugin=...)
@@ -340,7 +368,7 @@ def parse_socks5_uri(uri: str, source_sub: str = "") -> Node:
     elif uri.startswith("socks://"):
         without_scheme = uri[len("socks://"):]
     else:
-        raise ValueError(f"不是 socks5 或 socks 開頭的連結: '{uri[:60]}'")
+        raise ValueError(f"URI does not start with socks5:// or socks://: '{uri[:60]}'")
 
     # 拆 fragment（名稱）
     if "#" in without_scheme:
@@ -348,7 +376,7 @@ def parse_socks5_uri(uri: str, source_sub: str = "") -> Node:
         node_name = urllib.parse.unquote(fragment)
     else:
         main_part = without_scheme
-        node_name = "socks5 節點"
+        node_name = "SOCKS5 Node"
 
     # 拆 user:pass@host:port
     username_value: str | None = None
@@ -412,7 +440,7 @@ def parse_http_uri(uri: str, source_sub: str = "") -> Node:
         node_name = urllib.parse.unquote(fragment)
     else:
         main_part = without_scheme
-        node_name = "http 代理"
+        node_name = "HTTP Proxy"
 
     # 拆 user:pass@host:port
     username_value: str | None = None
@@ -457,25 +485,25 @@ def _split_host_port(host_port_str: str) -> tuple[str, int]:
     if host_port_str.startswith("["):
         bracket_end = host_port_str.find("]")
         if bracket_end < 0:
-            raise ValueError(f"IPv6 地址格式錯誤（缺少 ']'）: '{host_port_str}'")
+            raise ValueError(f"Invalid IPv6 address format (missing ']'): '{host_port_str}'")
         host_part = host_port_str[1:bracket_end]  # 去掉 [ ]
         rest = host_port_str[bracket_end + 1:]     # 應該是 ":port" 或空
         if rest.startswith(":"):
             port_part = rest[1:]
         else:
-            raise ValueError(f"IPv6 地址後面缺少 ':port': '{host_port_str}'")
+            raise ValueError(f"IPv6 address is missing ':port': '{host_port_str}'")
     else:
         # 普通格式：host:port
         last_colon = host_port_str.rfind(":")
         if last_colon < 0:
-            raise ValueError(f"找不到端口號（缺少 ':'）: '{host_port_str}'")
+            raise ValueError(f"Missing port separator ':' in '{host_port_str}'")
         host_part = host_port_str[:last_colon]
         port_part = host_port_str[last_colon + 1:]
 
     # 轉換端口號
     port_number = _parse_int_safe(port_part, "port")
     if port_number < 1 or port_number > 65535:
-        raise ValueError(f"端口號超出範圍 (1-65535): {port_number}")
+        raise ValueError(f"Port is out of range (1-65535): {port_number}")
 
     return host_part, port_number
 
@@ -506,4 +534,119 @@ def parse_single_uri(uri_line: str, source_sub: str = "") -> Node:
     elif uri_line.startswith("http://") or uri_line.startswith("https://"):
         return parse_http_uri(uri_line, source_sub)
     else:
-        raise ValueError(f"無法辨識的協議前綴: '{uri_line[:60]}'")
+        raise ValueError(f"Unknown URI scheme: '{uri_line[:60]}'")
+
+
+def build_node_uri(node: Node) -> str:
+    """Build a valid share URI from the current Node fields."""
+    if node.node_type == NODE_TYPE_VMESS:
+        return _build_vmess_uri(node)
+    if node.node_type == NODE_TYPE_VLESS:
+        return _build_vless_uri(node)
+    if node.node_type == NODE_TYPE_TROJAN:
+        return _build_trojan_uri(node)
+    if node.node_type == NODE_TYPE_SS:
+        return _build_ss_uri(node)
+    if node.node_type == NODE_TYPE_SOCKS5:
+        return _build_socks5_uri(node)
+    if node.node_type == NODE_TYPE_HTTP:
+        return _build_http_uri(node)
+
+    raise ValueError(f"Node type '{node.node_type}' cannot be exported as a share URI")
+
+
+def _build_vmess_uri(node: Node) -> str:
+    if not node.uuid_str:
+        raise ValueError("VMess node is missing UUID")
+
+    payload = {
+        "v": "2",
+        "ps": node.name,
+        "add": node.server,
+        "port": str(node.port),
+        "id": node.uuid_str,
+        "aid": str(node.alter_id or 0),
+        "scy": node.security or "auto",
+        "net": node.network or "tcp",
+        "type": "none",
+        "host": node.host or "",
+        "path": node.path or "",
+        "tls": "tls" if node.tls_enabled else "",
+        "sni": node.sni or "",
+        "alpn": ",".join(node.alpn) if node.alpn else "",
+    }
+    encoded = base64.b64encode(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    return f"vmess://{encoded}"
+
+
+def _build_vless_uri(node: Node) -> str:
+    if not node.uuid_str:
+        raise ValueError("VLESS node is missing UUID")
+
+    security = node.extra.get("security") if isinstance(node.extra, dict) else None
+    security = security or ("tls" if node.tls_enabled else "none")
+    query = _encode_query({
+        "type": node.network or "tcp",
+        "security": security,
+        "host": node.host or "",
+        "path": node.path or "",
+        "sni": node.sni or "",
+        "flow": node.flow or "",
+        "alpn": ",".join(node.alpn) if node.alpn else "",
+    })
+    host_port = _format_host_port(node.server, node.port)
+    fragment = _encode_fragment(node.name)
+    return f"vless://{node.uuid_str}@{host_port}?{query}#{fragment}"
+
+
+def _build_trojan_uri(node: Node) -> str:
+    if not node.password:
+        raise ValueError("Trojan node is missing password")
+
+    query = _encode_query({
+        "type": node.network or "tcp",
+        "host": node.host or "",
+        "path": node.path or "",
+        "sni": node.sni or "",
+        "alpn": ",".join(node.alpn) if node.alpn else "",
+    })
+    host_port = _format_host_port(node.server, node.port)
+    fragment = _encode_fragment(node.name)
+    password = urllib.parse.quote(node.password, safe="")
+    return f"trojan://{password}@{host_port}?{query}#{fragment}"
+
+
+def _build_ss_uri(node: Node) -> str:
+    if not node.encryption:
+        raise ValueError("Shadowsocks node is missing encryption method")
+    if node.password is None:
+        raise ValueError("Shadowsocks node is missing password")
+
+    user_info = f"{node.encryption}:{node.password}"
+    encoded = base64.b64encode(user_info.encode("utf-8")).decode("ascii")
+    host_port = _format_host_port(node.server, node.port)
+    fragment = _encode_fragment(node.name)
+    return f"ss://{encoded}@{host_port}#{fragment}"
+
+
+def _build_socks5_uri(node: Node) -> str:
+    host_port = _format_host_port(node.server, node.port)
+    fragment = _encode_fragment(node.name)
+    if node.username is not None or node.password is not None:
+        username = urllib.parse.quote(node.username or "", safe="")
+        password = urllib.parse.quote(node.password or "", safe="")
+        return f"socks5://{username}:{password}@{host_port}#{fragment}"
+    return f"socks5://{host_port}#{fragment}"
+
+
+def _build_http_uri(node: Node) -> str:
+    scheme = "https" if node.tls_enabled else "http"
+    host_port = _format_host_port(node.server, node.port)
+    fragment = _encode_fragment(node.name)
+    if node.username is not None or node.password is not None:
+        username = urllib.parse.quote(node.username or "", safe="")
+        password = urllib.parse.quote(node.password or "", safe="")
+        return f"{scheme}://{username}:{password}@{host_port}#{fragment}"
+    return f"{scheme}://{host_port}#{fragment}"

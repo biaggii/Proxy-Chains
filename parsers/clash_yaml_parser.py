@@ -63,23 +63,23 @@ def parse_clash_yaml(
     try:
         yaml_data = yaml.safe_load(yaml_text)
     except yaml.YAMLError as err:
-        error_msg = f"YAML 解析失敗 (訂閱: {source_sub_name}): {err}"
+        error_msg = f"YAML parse failed (subscription: {source_sub_name}): {err}"
         return [], [error_msg]
 
     # --- 第 2 步：檢查根結構 ---
     if not isinstance(yaml_data, dict):
-        return [], [f"YAML 根結構不是 dict (訂閱: {source_sub_name})"]
+        return [], [f"YAML root is not a dict (subscription: {source_sub_name})"]
 
     # 找 "proxies" 清單
     proxy_list = yaml_data.get("proxies")
     if proxy_list is None:
-        return [], [f"YAML 裡找不到 'proxies' 欄位 (訂閱: {source_sub_name})"]
+        return [], [f"Missing 'proxies' field in YAML (subscription: {source_sub_name})"]
 
     if not isinstance(proxy_list, list):
-        return [], [f"'proxies' 不是清單 (訂閱: {source_sub_name})"]
+        return [], [f"'proxies' is not a list (subscription: {source_sub_name})"]
 
     if len(proxy_list) == 0:
-        return [], [f"'proxies' 清單是空的 (訂閱: {source_sub_name})"]
+        return [], [f"'proxies' list is empty (subscription: {source_sub_name})"]
 
     # --- 第 3 步：逐一轉換 ---
     good_nodes: list[Node] = []
@@ -91,9 +91,9 @@ def parse_clash_yaml(
             good_nodes.append(node)
         except Exception as err:
             # 記下錯誤但繼續處理下一個
-            proxy_name = proxy_dict.get("name", "未知") if isinstance(proxy_dict, dict) else "非dict"
+            proxy_name = proxy_dict.get("name", "Unknown") if isinstance(proxy_dict, dict) else "non-dict"
             error_messages.append(
-                f"第 {index + 1} 個 proxy (名稱={proxy_name}) 解析失敗: {err}"
+                f"Failed to parse proxy #{index + 1} (name={proxy_name}): {err}"
             )
 
     return good_nodes, error_messages
@@ -110,18 +110,18 @@ def _convert_one_clash_proxy(
     """
     # 檢查是不是 dict
     if not isinstance(proxy_dict, dict):
-        raise ValueError(f"proxy 不是 dict，而是 {type(proxy_dict).__name__}")
+        raise ValueError(f"Proxy is not a dict, got {type(proxy_dict).__name__}")
 
     # --- 必要欄位 ---
-    proxy_name = str(proxy_dict.get("name", f"未命名-{index + 1}"))
+    proxy_name = str(proxy_dict.get("name", f"Unnamed-{index + 1}"))
     clash_type = str(proxy_dict.get("type", "")).lower()
     server_address = str(proxy_dict.get("server", ""))
     server_port = int(proxy_dict.get("port", 0))
 
     if not server_address:
-        raise ValueError("缺少 'server' 欄位")
+        raise ValueError("Missing 'server' field")
     if server_port < 1:
-        raise ValueError("缺少或無效的 'port' 欄位")
+        raise ValueError("Missing or invalid 'port' field")
 
     # 對應到我們的 node_type
     node_type = CLASH_TYPE_MAP.get(clash_type, NODE_TYPE_UNKNOWN)

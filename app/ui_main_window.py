@@ -1,11 +1,8 @@
 """
-ui_main_window.py — 主窗口
+Main application window.
 
-這是整個 GUI 的骨架：
-  - 頂部：QTabWidget（6 個頁籤）
-  - 底部：Apply / Start / Stop 三顆按鈕 + 狀態列
-
-所有頁面都共用同一個 AppState 物件。
+This module hosts the tab shell, the global action bar, runtime status,
+and the shared ``AppState`` wiring across the full desktop UI.
 """
 
 from PySide6.QtWidgets import (
@@ -26,27 +23,26 @@ from app.ui_pages_chains import ChainsPage
 from app.ui_pages_ports import PortsPage
 from app.ui_pages_logs import LogsPage
 from app.ui_pages_settings import SettingsPage
+from app.ui_pages_dashboard import DashboardPage
+from app.ui_pages_routing import RoutingPage
 
 
 class LogBridge(QObject):
     """
-    用來把背景執行緒的 log 文字安全地送到 GUI 執行緒。
-    因為 PySide6 不允許從非 GUI 執行緒直接修改 UI，
-    所以用 Signal 跨執行緒傳遞資料。
+    Forward process logs from worker threads back to the GUI thread safely.
     """
     log_signal = Signal(str)
     stopped_signal = Signal()
 
 
 class MainWindow(QMainWindow):
-    """應用程式主窗口"""
+    """Top-level application window."""
 
     def __init__(self, app_state: AppState):
         super().__init__()
         self.app_state = app_state
         self.process_runner = ProcessRunner()
 
-        # 用來跨執行緒傳 log 的橋樑
         self.log_bridge = LogBridge()
 
         self._init_ui()
@@ -55,56 +51,129 @@ class MainWindow(QMainWindow):
         self._load_and_refresh()
 
     def _init_ui(self) -> None:
-        """建立所有 UI 元件"""
+        """Create the main window widgets."""
         self.setWindowTitle("ChainPort Gateway - Proxy Multi-Chain Manager")
-        self.setMinimumSize(950, 750)
-        self.resize(950, 750)
+        self.setMinimumSize(1120, 820)
+        self.resize(1200, 860)
+        self.setStyleSheet(
+            """
+            QMainWindow {
+              background: #f3f5f9;
+            }
+            QTabWidget::pane {
+              border: 0;
+              background: transparent;
+            }
+            QTabBar::tab {
+              background: #dde4ef;
+              padding: 10px 16px;
+              border-radius: 10px;
+              margin-right: 6px;
+            }
+            QTabBar::tab:selected {
+              background: #1f4b99;
+              color: white;
+            }
+            QLabel#bannerLabel {
+              border-radius: 10px;
+              padding: 10px 14px;
+              font-weight: 600;
+            }
+            QFrame#dashboardHero, QFrame#dashboardPanel, QFrame#dashboardStatCard, QFrame#dashboardMetricCard {
+              background: white;
+              border: 1px solid #d8dfeb;
+              border-radius: 14px;
+            }
+            QLabel#dashboardHeroTitle {
+              font-size: 24px;
+              font-weight: 700;
+              color: #16386c;
+            }
+            QLabel#dashboardHeroSubtitle {
+              color: #4d617f;
+            }
+            QLabel#dashboardPanelTitle, QLabel#dashboardStatTitle {
+              font-size: 12px;
+              font-weight: 700;
+              color: #64748b;
+              text-transform: uppercase;
+            }
+            QLabel#dashboardStatValue {
+              font-size: 24px;
+              font-weight: 700;
+              color: #102646;
+            }
+            QLabel#dashboardPreflightTitle {
+              font-size: 18px;
+              font-weight: 700;
+              color: #102646;
+            }
+            """
+        )
 
-        # 主要容器
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
 
-        # ---------- Tab Widget ----------
+        self.banner = QLabel()
+        self.banner.setObjectName("bannerLabel")
+        self.banner.setWordWrap(True)
+        self.banner.hide()
+        main_layout.addWidget(self.banner)
+
         self.tabs = QTabWidget()
 
-        # 建立 6 個頁面
+        self.page_dashboard = DashboardPage(self.app_state)
         self.page_subs = SubscriptionsPage(self.app_state)
         self.page_nodes = NodesPage(self.app_state)
         self.page_chains = ChainsPage(self.app_state)
         self.page_ports = PortsPage(self.app_state)
+        self.page_routing = RoutingPage(self.app_state, self.page_chains, self.page_ports)
         self.page_logs = LogsPage()
         self.page_settings = SettingsPage(self.app_state)
 
-        self.tabs.addTab(self.page_subs, "📡 Subscriptions")
-        self.tabs.addTab(self.page_nodes, "🖧 Nodes")
-        self.tabs.addTab(self.page_chains, "🔗 Chains")
-        self.tabs.addTab(self.page_ports, "🔌 Ports")
-        self.tabs.addTab(self.page_logs, "📋 Logs")
-        self.tabs.addTab(self.page_settings, "⚙️ Settings")
+        self.tabs.addTab(self.page_dashboard, "Home")
+        self.tabs.addTab(self.page_subs, "Subscriptions")
+        self.tabs.addTab(self.page_nodes, "Nodes")
+        self.tabs.addTab(self.page_routing, "Routing")
+        self.tabs.addTab(self.page_logs, "Logs")
+        self.tabs.addTab(self.page_settings, "Settings")
+        self._tab_widgets = {
+            "dashboard": self.page_dashboard,
+            "subscriptions": self.page_subs,
+            "nodes": self.page_nodes,
+            "routing": self.page_routing,
+            "logs": self.page_logs,
+            "settings": self.page_settings,
+        }
 
-        # 切頁時刷新
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         main_layout.addWidget(self.tabs)
 
-        # ---------- 底部按鈕列 ----------
         bottom_row = QHBoxLayout()
 
-        # 狀態顯示
+        status_stack = QVBoxLayout()
         self.lbl_status = QLabel("● Stopped")
-        self.lbl_status.setStyleSheet("color: gray; font-weight: bold;")
-        bottom_row.addWidget(self.lbl_status)
+        self.lbl_status.setStyleSheet("color: gray; font-weight: bold; font-size: 14px;")
+        self.lbl_preflight = QLabel("Waiting for configuration data")
+        self.lbl_preflight.setWordWrap(True)
+        self.lbl_context = QLabel("")
+        self.lbl_context.setStyleSheet("color: #64748b;")
+        status_stack.addWidget(self.lbl_status)
+        status_stack.addWidget(self.lbl_preflight)
+        status_stack.addWidget(self.lbl_context)
+        bottom_row.addLayout(status_stack)
 
         bottom_row.addStretch()
 
-        self.btn_apply = QPushButton("📝 Apply (Generate Config)")
+        self.btn_apply = QPushButton("Apply")
         self.btn_apply.setMinimumHeight(36)
         self.btn_apply.clicked.connect(self._on_apply)
         
-        self.btn_run_admin = QPushButton("🛡️ Run as Admin")
+        self.btn_run_admin = QPushButton("Run as Admin")
         self.btn_run_admin.setMinimumHeight(36)
-        self.btn_run_admin.setStyleSheet("QPushButton { background-color: #f39c12; color: white; font-weight: bold; }")
+        self.btn_run_admin.setStyleSheet("QPushButton { background-color: #f59e0b; color: #1f2937; font-weight: bold; }")
         self.btn_run_admin.clicked.connect(self._relaunch_as_admin)
         
         import ctypes
@@ -114,51 +183,57 @@ class MainWindow(QMainWindow):
         bottom_row.addWidget(self.btn_run_admin)
         bottom_row.addWidget(self.btn_apply)
 
-        self.btn_start = QPushButton("▶️ Start")
+        self.btn_start = QPushButton("Start")
         self.btn_start.setMinimumHeight(36)
-        self.btn_start.setStyleSheet("QPushButton { background-color: #2d7d46; color: white; }")
+        self.btn_start.setStyleSheet("QPushButton { background-color: #2d7d46; color: white; font-weight: 600; }")
         self.btn_start.clicked.connect(self._on_start)
         bottom_row.addWidget(self.btn_start)
 
-        self.btn_stop = QPushButton("⏹️ Stop")
+        self.btn_stop = QPushButton("Stop")
         self.btn_stop.setMinimumHeight(36)
-        self.btn_stop.setStyleSheet("QPushButton { background-color: #c0392b; color: white; }")
+        self.btn_stop.setStyleSheet("QPushButton { background-color: #c0392b; color: white; font-weight: 600; }")
         self.btn_stop.clicked.connect(self._on_stop)
         bottom_row.addWidget(self.btn_stop)
 
         main_layout.addLayout(bottom_row)
 
-        # 狀態列
-        self.statusBar().showMessage("Ready")
+        self.statusBar().showMessage("Workspace ready")
 
     def _connect_signals(self) -> None:
-        """連接各頁面的 data_changed 信號"""
-        # 任何頁面的資料改變時，自動儲存 state.json
+        """Connect cross-page signals and runtime callbacks."""
         self.page_subs.data_changed.connect(self._on_data_changed)
         self.page_nodes.data_changed.connect(self._on_data_changed)
         self.page_chains.data_changed.connect(self._on_data_changed)
         self.page_ports.data_changed.connect(self._on_data_changed)
         self.page_settings.data_changed.connect(self._on_data_changed)
+        self.page_dashboard.navigate_requested.connect(self._open_tab)
+        self.page_dashboard.apply_requested.connect(self._on_apply)
+        self.page_dashboard.start_requested.connect(self._on_start)
+        self.page_dashboard.stop_requested.connect(self._on_stop)
+        self.page_dashboard.open_logs_requested.connect(lambda: self._open_tab("logs"))
 
-        # Log 橋：背景執行緒 -> GUI 執行緒
         self.log_bridge.log_signal.connect(self.page_logs.append_log)
         self.log_bridge.stopped_signal.connect(self._on_core_exited)
 
     def _load_and_refresh(self) -> None:
-        """載入 state.json 並刷新所有頁面"""
+        """Load persisted state and refresh all pages."""
         self.app_state.load_from_file()
         self._refresh_all_pages()
 
     def _refresh_all_pages(self) -> None:
-        """刷新所有頁面的表格"""
+        """Refresh every page from the latest state."""
+        self.page_dashboard.refresh_table()
         self.page_subs.refresh_table()
         self.page_nodes.refresh_table()
         self.page_chains.refresh_table()
         self.page_ports.refresh_table()
+        self.page_routing.refresh_table()
+        self.page_logs.refresh_table()
         self.page_settings.refresh_table()
+        self._refresh_action_state()
 
     def _init_tray_icon(self) -> None:
-        """初始化系統列圖示 (System Tray)"""
+        """Initialize the system tray icon and menu."""
         icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "icon.ico"))
         app_icon = QIcon(icon_path) if os.path.exists(icon_path) else self.style().standardIcon(QStyle.SP_DriveNetIcon)
         
@@ -222,7 +297,7 @@ class MainWindow(QMainWindow):
             self._show_window()
 
     def _force_quit(self):
-        """完全退出程式，先停止核心"""
+        """Exit the application after stopping the tracked core process."""
         if self.process_runner.is_running():
             self._on_stop()
         self.app_state.save_to_file()
@@ -230,15 +305,22 @@ class MainWindow(QMainWindow):
         QApplication.quit()
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        """當使用者按下 [X] 時，縮小到系統列而不是完全退出"""
+        """Handle the window close action based on the tray preference."""
         if getattr(self, '_force_closing', False):
+            event.accept()
+            return
+
+        if not self.app_state.close_to_tray:
+            if self.process_runner.is_running():
+                self._on_stop()
+            self.app_state.save_to_file()
+            self._force_closing = True
             event.accept()
             return
             
         event.ignore()
         self.hide()
         
-        # 可選：顯示一個氣泡提示告訴使用者藏去哪裡了
         if self.tray_icon.isVisible():
             self.tray_icon.showMessage(
                 "ChainPort Gateway",
@@ -248,50 +330,47 @@ class MainWindow(QMainWindow):
             )
 
     def changeEvent(self, event: QEvent) -> None:
-        """當使用者按下最小化「-」時也隱藏到系統列"""
-        if event.type() == QEvent.WindowStateChange:
+        """Hide to tray when minimizing if the tray preference is enabled."""
+        if event.type() == QEvent.WindowStateChange and self.app_state.close_to_tray:
             if self.isMinimized():
                 self.setWindowState(self.windowState() & ~Qt.WindowMinimized)
                 self.hide()
         super().changeEvent(event)
 
-    # ============================================================
-    # 事件處理
-    # ============================================================
-
     @Slot()
     def _on_data_changed(self) -> None:
-        """資料改變時，儲存 state 並刷新"""
+        """Persist state changes and refresh dependent pages."""
         self.app_state.save_to_file()
         self.statusBar().showMessage("Auto-saved", 3000)
+        self._refresh_all_pages()
 
     @Slot(int)
     def _on_tab_changed(self, index: int) -> None:
-        """切頁時刷新該頁"""
+        """Refresh the active page when the current tab changes."""
         page = self.tabs.widget(index)
         if hasattr(page, "refresh_table"):
             page.refresh_table()
+        self._refresh_action_state()
 
     @Slot()
     def _on_apply(self) -> None:
-        """按下 Apply：產生配置檔 + 驗證"""
+        """Generate and verify the current core configuration."""
         adapter = self._get_current_adapter()
         if adapter is None:
             return
 
-        # 檢查基本條件
-        if not self.app_state.port_mappings:
-            QMessageBox.warning(self, "Notice", "Please create at least one port mapping in Ports tab first")
+        preflight = self._get_preflight_state()
+        if not preflight["can_apply"]:
+            self._show_banner(preflight["detail"], "warning")
+            QMessageBox.warning(self, "Action Needed", preflight["detail"])
             return
 
-        # 產生配置
         try:
             config_text, config_path = adapter.generate_config(self.app_state)
         except Exception as err:
             QMessageBox.critical(self, "Config Generation Failed", str(err))
             return
 
-        # 驗證配置
         exe_path = self.app_state.core_exe_paths.get(self.app_state.core_type, "")
         if exe_path:
             check_cmd = adapter.get_check_command(config_path, exe_path)
@@ -305,6 +384,7 @@ class MainWindow(QMainWindow):
                     f"File: {config_path}\n"
                     f"Ports mapped: {len(self.app_state.port_mappings)}"
                 )
+                self._show_banner("Configuration generated and verified successfully.", "success")
             else:
                 self.page_logs.append_log(f"[Verify] ❌ Config verification failed:")
                 self.page_logs.append_log(output)
@@ -316,6 +396,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(
                     self, "Verification Failed", error_msg
                 )
+                self._show_banner("Configuration verification failed. Review the logs for details.", "error")
         else:
             self.page_logs.append_log(f"[Apply] Config generated: {config_path}")
             self.page_logs.append_log("[Apply] ⚠️ Core path not set, skipping verification")
@@ -323,14 +404,22 @@ class MainWindow(QMainWindow):
                 self, "Apply",
                 f"Config generated (Not verified due to missing core path)\n\nFile: {config_path}"
             )
+            self._show_banner("Configuration generated. Add a core executable path to enable verification.", "info")
 
         self.app_state.save_to_file()
+        self._refresh_action_state()
 
     @Slot()
     def _on_start(self) -> None:
-        """按下 Start：啟動核心"""
+        """Generate config files and start the selected core."""
         if self.process_runner.is_running():
             QMessageBox.information(self, "Notice", "Core is already running")
+            return
+
+        preflight = self._get_preflight_state()
+        if not preflight["can_start"]:
+            self._show_banner(preflight["detail"], "warning")
+            QMessageBox.warning(self, "Action Needed", preflight["detail"])
             return
 
         exe_path = self.app_state.core_exe_paths.get(self.app_state.core_type, "")
@@ -342,7 +431,6 @@ class MainWindow(QMainWindow):
         if adapter is None:
             return
 
-        # 先幫所有的核心產生配置檔 (Auto-generate for all cores)
         from core.singbox_adapter import SingBoxAdapter
         from core.xray_adapter import XrayAdapter
         from core.mihomo_adapter import MihomoAdapter
@@ -355,17 +443,14 @@ class MainWindow(QMainWindow):
             except Exception as err:
                 self.page_logs.append_log(f"[Auto Gen] ❌ {adp.adapter_name()} generation failed: {err}")
 
-        # 取得當前選擇的核心配置路徑以供啟動 (Get the config path for the selected core to start)
         try:
             _, config_path = adapter.generate_config(self.app_state)
         except Exception as err:
             QMessageBox.critical(self, "Error", f"Config generation failed: {err}")
             return
 
-        # 啟動
         start_cmd = adapter.get_start_command(config_path, exe_path)
 
-        # on_log 回呼用 signal 把文字送到 GUI 執行緒
         def on_log_from_thread(text: str) -> None:
             self.log_bridge.log_signal.emit(text)
 
@@ -380,41 +465,43 @@ class MainWindow(QMainWindow):
         if not started:
             self._update_status(False)
             self.statusBar().showMessage("Core Start Failed", 3000)
-            self.tabs.setCurrentWidget(self.page_logs)
+            self._open_tab("logs")
             QMessageBox.warning(
                 self,
                 "Start Failed",
                 "Core process failed to start. Check the Logs tab for details.",
             )
+            self._show_banner("Core process failed to start. Check the Logs tab for details.", "error")
             return
 
         self._update_status(True)
         self.statusBar().showMessage("Core Started", 3000)
+        self._show_banner("Core started successfully. Live output is available in Logs.", "success")
 
-        # 切到 Logs 頁方便看 log
-        self.tabs.setCurrentWidget(self.page_logs)
+        self._open_tab("logs")
+        self._refresh_action_state()
 
     @Slot()
     def _on_core_exited(self) -> None:
-        """核心退出時更新 UI 狀態"""
+        """Update UI state after the core process exits."""
         self._update_status(False)
         self.statusBar().showMessage("Core Exited", 3000)
+        self._show_banner("Core process exited.", "info")
+        self._refresh_action_state()
 
     @Slot()
     def _on_stop(self) -> None:
-        """按下 Stop：停止目前追蹤的核心進程"""
+        """Stop the tracked core process if it is running."""
         if self.process_runner.is_running():
             self.process_runner.stop()
         
         self._update_status(False)
         self.statusBar().showMessage("Core Stopped", 3000)
-
-    # ============================================================
-    # 工具方法
-    # ============================================================
+        self._show_banner("Core stopped.", "info")
+        self._refresh_action_state()
 
     def _get_current_adapter(self):
-        """根據設定取得對應的 CoreAdapter"""
+        """Return the adapter for the currently selected core type."""
         core_type = self.app_state.core_type
 
         if core_type == "sing-box":
@@ -431,10 +518,131 @@ class MainWindow(QMainWindow):
             return None
 
     def _update_status(self, is_running: bool) -> None:
-        """更新底部狀態標籤"""
+        """Update the runtime status label in the global action bar."""
         if is_running:
             self.lbl_status.setText("● Running")
             self.lbl_status.setStyleSheet("color: #2ecc71; font-weight: bold;")
         else:
             self.lbl_status.setText("● Stopped")
             self.lbl_status.setStyleSheet("color: gray; font-weight: bold;")
+        self._refresh_action_state()
+
+    def _show_banner(self, message: str, level: str = "info") -> None:
+        colors = {
+            "success": ("#ecfdf3", "#166534"),
+            "warning": ("#fff7ed", "#9a3412"),
+            "error": ("#fef2f2", "#991b1b"),
+            "info": ("#eff6ff", "#1d4ed8"),
+        }
+        background, foreground = colors.get(level, colors["info"])
+        self.banner.setText(message)
+        self.banner.setStyleSheet(
+            f"QLabel#bannerLabel {{ background: {background}; color: {foreground}; border: 1px solid {foreground}; }}"
+        )
+        self.banner.show()
+
+    def _open_tab(self, key: str) -> None:
+        page = self._tab_widgets.get(key)
+        if page is not None:
+            self.tabs.setCurrentWidget(page)
+
+    def _is_admin(self) -> bool:
+        import ctypes
+
+        try:
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+
+    def _get_preflight_state(self) -> dict[str, object]:
+        exe_path = self.app_state.core_exe_paths.get(self.app_state.core_type, "")
+        valid_chain_ids = {
+            chain.chain_id
+            for chain in self.app_state.chains
+            if chain.hop_node_ids and len(self.app_state.get_nodes_for_chain(chain)) == len(chain.hop_node_ids)
+        }
+        valid_mapping_count = sum(
+            1 for mapping in self.app_state.port_mappings if mapping.chain_id in valid_chain_ids
+        )
+
+        blockers: list[str] = []
+        warnings: list[str] = []
+        next_target = "subscriptions"
+
+        if not self.app_state.subscriptions and not self.app_state.nodes:
+            blockers.append("No nodes are available yet. Add a subscription or paste node URIs.")
+            next_target = "subscriptions"
+        elif not self.app_state.nodes:
+            blockers.append("Subscriptions exist, but no nodes were imported successfully.")
+            next_target = "subscriptions"
+        elif not valid_chain_ids:
+            blockers.append("No usable chains exist yet. Create a chain with at least one valid hop.")
+            next_target = "routing"
+        elif valid_mapping_count == 0:
+            blockers.append("No usable port mappings exist yet. Bind at least one local port to a valid chain.")
+            next_target = "routing"
+
+        if not exe_path:
+            blockers.append("A core executable path is still missing.")
+            if next_target == "subscriptions":
+                next_target = "settings"
+
+        if self.app_state.enable_tun:
+            if not self.app_state.tun_chain_id:
+                blockers.append("TUN mode is enabled, but no chain is selected for it.")
+                next_target = "routing"
+            elif not self._is_admin():
+                blockers.append("TUN mode is enabled and requires administrator privileges before starting.")
+                warnings.append("Use 'Run as Admin' before starting the core with TUN enabled.")
+                next_target = "routing"
+
+        if self.app_state.subscriptions == [] and self.app_state.nodes:
+            warnings.append("You are running only manual nodes. That is fine, but subscriptions remain empty.")
+
+        if self.app_state.enable_tun and self.app_state.tun_chain_id:
+            tun_chain = self.app_state.find_chain_by_id(self.app_state.tun_chain_id)
+            if tun_chain is None:
+                warnings.append("The TUN chain no longer exists and should be reselected.")
+
+        can_apply = bool(valid_mapping_count)
+        can_start = can_apply and bool(exe_path) and not (
+            self.app_state.enable_tun and not self._is_admin()
+        ) and not (
+            self.app_state.enable_tun and not self.app_state.tun_chain_id
+        )
+        title = "Ready" if can_start else "Action required"
+        detail = blockers[0] if blockers else ("Configuration looks ready." if not warnings else warnings[0])
+        next_step = (
+            "Apply the config, then start the core."
+            if can_start
+            else "Open the highlighted page and resolve the remaining blockers."
+        )
+        return {
+            "title": title,
+            "detail": detail,
+            "next_step": next_step,
+            "blockers": blockers,
+            "warnings": warnings,
+            "next_target": next_target,
+            "can_apply": can_apply,
+            "can_start": can_start,
+            "valid_mapping_count": valid_mapping_count,
+        }
+
+    def _refresh_action_state(self) -> None:
+        preflight = self._get_preflight_state()
+        is_running = self.process_runner.is_running()
+        self.btn_apply.setEnabled(bool(preflight["can_apply"]) and not is_running)
+        self.btn_start.setEnabled(bool(preflight["can_start"]) and not is_running)
+        self.btn_stop.setEnabled(is_running)
+        self.btn_run_admin.setVisible(self.app_state.enable_tun and not self._is_admin())
+        self.lbl_preflight.setText(str(preflight["title"]))
+        self.lbl_context.setText(f"{preflight['detail']} Next: {preflight['next_step']}")
+        self.page_dashboard.set_runtime_state(is_running=is_running)
+        self.page_dashboard.set_preflight_summary(
+            blockers=list(preflight["blockers"]),
+            warnings=list(preflight["warnings"]),
+            next_target=str(preflight["next_target"]),
+            can_apply=bool(preflight["can_apply"]),
+            can_start=bool(preflight["can_start"]),
+        )

@@ -76,6 +76,7 @@ class AppState:
         # 啟動設定 (Startup Settings)
         self.run_on_startup: bool = False
         self.minimize_on_start: bool = False
+        self.close_to_tray: bool = True
 
     def _get_default_exe_path(self, core_type: str) -> str:
         """根據核心類型，預設去 ./bin/ 目錄下找找看有沒有對應的 exe"""
@@ -164,6 +165,7 @@ class AppState:
             "tun_chain_id": self.tun_chain_id,
             "run_on_startup": self.run_on_startup,
             "minimize_on_start": self.minimize_on_start,
+            "close_to_tray": self.close_to_tray,
             "subscriptions": [s.to_dict() for s in self.subscriptions],
             "nodes": [n.to_dict() for n in self.nodes],
             "chains": [c.to_dict() for c in self.chains],
@@ -225,6 +227,7 @@ class AppState:
         self.tun_chain_id = state_dict.get("tun_chain_id") or ""
         self.run_on_startup = state_dict.get("run_on_startup", False)
         self.minimize_on_start = state_dict.get("minimize_on_start", False)
+        self.close_to_tray = state_dict.get("close_to_tray", True)
 
         # 還原資料
         self.subscriptions = [

@@ -30,21 +30,26 @@ class ChainsPage(QWidget):
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
+        self.summary_label = QLabel(
+            "A chain is the ordered route your traffic follows. The top hop is the entry, and the last hop is the exit."
+        )
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
 
         # ---------- 上半：Wrap Socks5 ----------
         top_row = QHBoxLayout()
 
         # Wrap Socks5
-        wrap_group = QGroupBox("Wrap Socks5 (Pre-chain + Landing)")
+        wrap_group = QGroupBox("Add SOCKS5 Exit")
         wrap_form = QFormLayout()
         self.combo_pre_chain = QComboBox()
-        wrap_form.addRow("Pre-chain:", self.combo_pre_chain)
+        wrap_form.addRow("Base Chain:", self.combo_pre_chain)
         self.combo_landing_socks5 = QComboBox()
-        wrap_form.addRow("Landing Socks5:", self.combo_landing_socks5)
+        wrap_form.addRow("Exit SOCKS5 Node:", self.combo_landing_socks5)
         self.input_wrap_name = QLineEdit()
-        self.input_wrap_name.setPlaceholderText("New Chain Name")
-        wrap_form.addRow("New Name:", self.input_wrap_name)
-        btn_wrap = QPushButton("🔗 Generate Wrap Chain")
+        self.input_wrap_name.setPlaceholderText("New Route Name")
+        wrap_form.addRow("New Chain Name:", self.input_wrap_name)
+        btn_wrap = QPushButton("Create Exit Chain")
         btn_wrap.clicked.connect(self._on_wrap_socks5)
         wrap_form.addRow(btn_wrap)
         wrap_group.setLayout(wrap_form)
@@ -58,13 +63,13 @@ class ChainsPage(QWidget):
         # 左邊：chain 清單
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-        left_layout.addWidget(QLabel("All Chains:"))
+        left_layout.addWidget(QLabel("Chains"))
         self.chain_list = QListWidget()
         self.chain_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.chain_list.currentRowChanged.connect(self._on_chain_selected)
         left_layout.addWidget(self.chain_list)
 
-        btn_add_empty_chain = QPushButton("➕ Add Empty Chain")
+        btn_add_empty_chain = QPushButton("Create New Chain")
         btn_add_empty_chain.clicked.connect(self._on_add_empty_chain)
         left_layout.addWidget(btn_add_empty_chain)
 
@@ -73,12 +78,12 @@ class ChainsPage(QWidget):
         self.input_rename_pattern = QLineEdit()
         self.input_rename_pattern.setPlaceholderText("e.g. US{1-8} or HK{1-5}")
         rename_row.addWidget(self.input_rename_pattern)
-        btn_batch_rename = QPushButton("✏️ Batch Rename")
+        btn_batch_rename = QPushButton("Rename Selected")
         btn_batch_rename.clicked.connect(self._on_batch_rename)
         rename_row.addWidget(btn_batch_rename)
         left_layout.addLayout(rename_row)
 
-        btn_del_chain = QPushButton("🗑️ Delete Selected Chain")
+        btn_del_chain = QPushButton("Delete Selected Chain")
         btn_del_chain.clicked.connect(self._on_delete_chain)
         left_layout.addWidget(btn_del_chain)
         splitter.addWidget(left_widget)
@@ -86,7 +91,7 @@ class ChainsPage(QWidget):
         # 右邊：hop 編輯
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
-        right_layout.addWidget(QLabel("Hops (Top to Bottom = Entry to Landing):"))
+        right_layout.addWidget(QLabel("Hops (Top to Bottom = Entry to Exit)"))
 
         self.hop_list = QListWidget()
         right_layout.addWidget(self.hop_list)
@@ -95,19 +100,19 @@ class ChainsPage(QWidget):
         hop_btns = QHBoxLayout()
         self.combo_add_node = QComboBox()
         hop_btns.addWidget(self.combo_add_node)
-        btn_add_hop = QPushButton("➕ Add Hop")
+        btn_add_hop = QPushButton("Add Hop")
         btn_add_hop.clicked.connect(self._on_add_hop)
         hop_btns.addWidget(btn_add_hop)
         right_layout.addLayout(hop_btns)
 
         hop_btns2 = QHBoxLayout()
-        btn_up = QPushButton("⬆️ Move Up")
+        btn_up = QPushButton("Move Up")
         btn_up.clicked.connect(self._on_move_up)
         hop_btns2.addWidget(btn_up)
-        btn_down = QPushButton("⬇️ Move Down")
+        btn_down = QPushButton("Move Down")
         btn_down.clicked.connect(self._on_move_down)
         hop_btns2.addWidget(btn_down)
-        btn_remove_hop = QPushButton("❌ Remove Hop")
+        btn_remove_hop = QPushButton("Remove Hop")
         btn_remove_hop.clicked.connect(self._on_remove_hop)
         hop_btns2.addWidget(btn_remove_hop)
         right_layout.addLayout(hop_btns2)
@@ -124,6 +129,10 @@ class ChainsPage(QWidget):
         """刷新所有清單"""
         self._refresh_chain_list()
         self._refresh_combos()
+        self.summary_label.setText(
+            f"{len(self.app_state.chains)} chain(s) available. "
+            "Use the top section to add a SOCKS5 exit, or build hops manually below."
+        )
 
     def _refresh_chain_list(self) -> None:
         """刷新 chain 清單"""

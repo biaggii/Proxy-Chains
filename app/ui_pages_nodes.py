@@ -285,6 +285,9 @@ class NodesPage(QWidget):
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
+        self.summary_label = QLabel()
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
 
         # ---------- 搜尋/篩選 ----------
         filter_row = QHBoxLayout()
@@ -306,14 +309,14 @@ class NodesPage(QWidget):
         add_group = QGroupBox("Add Node Manually")
         add_row = QHBoxLayout()
         self.manual_input = QLineEdit()
-        self.manual_input.setPlaceholderText("socks5://user:pass@1.2.3.4:1080#Name  (Paste URI here)")
+        self.manual_input.setPlaceholderText("Paste a share URI here, for example socks5://user:pass@1.2.3.4:1080#Office")
         add_row.addWidget(self.manual_input)
 
-        btn_manual_add = QPushButton("➕ Parse URI")
+        btn_manual_add = QPushButton("Import URI")
         btn_manual_add.clicked.connect(self._on_manual_add)
         add_row.addWidget(btn_manual_add)
 
-        btn_add_node = QPushButton("➕ Add Node")
+        btn_add_node = QPushButton("Create Node")
         btn_add_node.clicked.connect(self._on_add_new_node)
         add_row.addWidget(btn_add_node)
 
@@ -332,25 +335,45 @@ class NodesPage(QWidget):
         self.table.setSelectionBehavior(
             QTableWidget.SelectionBehavior.SelectRows
         )
+        self.table.setAlternatingRowColors(True)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
+        self.table.itemSelectionChanged.connect(self._sync_action_buttons)
         layout.addWidget(self.table)
 
         btn_row = QHBoxLayout()
-        btn_delete = QPushButton("🗑️ Delete Selected")
-        btn_delete.clicked.connect(self._on_delete_selected)
-        btn_row.addWidget(btn_delete)
+        self.btn_edit = QPushButton("Edit")
+        self.btn_edit.clicked.connect(self._on_edit_node)
+        btn_row.addWidget(self.btn_edit)
 
-        btn_batch_chain = QPushButton("🔗 Batch Create Chain from Selected")
-        btn_batch_chain.clicked.connect(self._on_batch_create_chain)
-        btn_row.addWidget(btn_batch_chain)
+        self.btn_copy = QPushButton("Copy URI")
+        self.btn_copy.clicked.connect(self._on_copy_nodes)
+        btn_row.addWidget(self.btn_copy)
+
+        self.btn_paste = QPushButton("Import Clipboard")
+        self.btn_paste.clicked.connect(self._on_paste_nodes)
+        btn_row.addWidget(self.btn_paste)
+
+        self.btn_ping = QPushButton("Test Latency")
+        self.btn_ping.clicked.connect(self._on_test_tcping)
+        btn_row.addWidget(self.btn_ping)
+
+        self.btn_batch_chain = QPushButton("Create Chain(s)")
+        self.btn_batch_chain.clicked.connect(self._on_batch_create_chain)
+        btn_row.addWidget(self.btn_batch_chain)
+
+        self.btn_delete = QPushButton("Delete Selected")
+        self.btn_delete.clicked.connect(self._on_delete_selected)
+        btn_row.addWidget(self.btn_delete)
 
         lbl_count = QLabel("")
         self._lbl_count = lbl_count
+        btn_row.addStretch()
         btn_row.addWidget(lbl_count)
 
         layout.addLayout(btn_row)
+        self._sync_action_buttons()
 
     def _on_header_clicked(self, logical_index: int) -> None:
         """點擊標題可以排序"""
@@ -362,7 +385,7 @@ class NodesPage(QWidget):
         self.refresh_table()
 
     def refresh_table(self) -> None:
-        """重新載入表格（帶篩選與排序），並將 socks5 分離"""
+        """Reload the table with filtering and sorting applied."""
         keyword = self.search_input.text().strip().lower()
         type_filter = self.type_filter.currentText()
 
@@ -400,18 +423,10 @@ class NodesPage(QWidget):
 
                 filtered.sort(key=sort_key, reverse=self._sort_reverse)
 
-        # 3. 分開 socks5 和 其他節點
-        socks_nodes = [n for n in filtered if n.node_type == "socks5"]
-        other_nodes = [n for n in filtered if n.node_type != "socks5"]
-
-        # 如果兩邊都有資料，總行數就要多一列分隔線
-        has_separator = bool(socks_nodes and other_nodes)
-        
-        self.table.setRowCount(len(socks_nodes) + len(other_nodes) + (1 if has_separator else 0))
-        self._filtered_nodes = filtered # 保留原本過濾後的實體列表用來取用
+        self.table.setRowCount(len(filtered))
+        self._filtered_nodes = filtered
         self._table_row_to_node.clear()
 
-        # 建立輔助方法來填充列
         def _fill_row(row_idx: int, node: Node):
             self.table.setItem(row_idx, 0, QTableWidgetItem(node.node_id))
             self.table.setItem(row_idx, 1, QTableWidgetItem(node.name))
@@ -433,41 +448,28 @@ class NodesPage(QWidget):
             
             self._table_row_to_node[row_idx] = node
 
-        current_row = 0
-        
-        # 畫 Socks 節點
-        for node in socks_nodes:
-            _fill_row(current_row, node)
-            current_row += 1
-            
-        # 畫分隔線
-        if has_separator:
-            # 先填滿所有爛位以防 selectAll 會選中空白背景
-            for col in range(7):
-                empty_item = QTableWidgetItem("")
-                empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
-                self.table.setItem(current_row, col, empty_item)
-                
-            # 建立剛好橫跨所有的分隔線文字，綁在第 0 欄
-            sep_item = self.table.item(current_row, 0)
-            sep_item.setText("────────────────────────────────────────SOCKS5────────────────────────────────────────")
-            sep_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setSpan(current_row, 0, 1, 7)
-            # 讓分隔線變成深色背景增加辨識度
-            # sep_item.setBackground(QtGui.QColor("#444444"))
-            current_row += 1
-            
-        # 畫其他節點
-        for node in other_nodes:
-            _fill_row(current_row, node)
-            current_row += 1
+        for row_idx, node in enumerate(filtered):
+            _fill_row(row_idx, node)
 
         self._lbl_count.setText(
             f"Showing {len(filtered)} / Total {len(self.app_state.nodes)} nodes"
         )
+        self.summary_label.setText(
+            f"{len(self.app_state.nodes)} node(s) available. "
+            "Review imported nodes here, then use the toolbar to test them, copy URIs, or turn selections into chains."
+        )
+        self._sync_action_buttons()
 
     def _on_filter_changed(self) -> None:
         self.refresh_table()
+
+    def _sync_action_buttons(self) -> None:
+        has_selection = bool(self.table.selectedIndexes())
+        self.btn_edit.setEnabled(has_selection)
+        self.btn_copy.setEnabled(has_selection)
+        self.btn_ping.setEnabled(has_selection)
+        self.btn_batch_chain.setEnabled(has_selection)
+        self.btn_delete.setEnabled(has_selection)
 
     def _on_manual_add(self) -> None:
         """手動新增節點"""
@@ -593,16 +595,16 @@ class NodesPage(QWidget):
     def _show_context_menu(self, pos) -> None:
         """右鍵選單"""
         menu = QMenu(self)
-        action_edit = menu.addAction("編輯節點 (Edit)")
-        action_copy = menu.addAction("複製節點 URI (Copy)")
-        action_paste = menu.addAction("從剪貼簿貼上節點 (Paste)")
+        action_edit = menu.addAction("Edit Node")
+        action_copy = menu.addAction("Copy Node URI")
+        action_paste = menu.addAction("Paste Node(s) from Clipboard")
         menu.addSeparator()
-        action_select_all = menu.addAction("全選 (Select All)")
-        action_ping = menu.addAction("測試 TCP 延遲 (Test tcping)")
+        action_select_all = menu.addAction("Select All")
+        action_ping = menu.addAction("Test TCP Latency")
         menu.addSeparator()
-        action_batch_chain = menu.addAction("為選中節點批量建立 Chain (Batch Create Chain)")
+        action_batch_chain = menu.addAction("Batch Create Chains from Selection")
         menu.addSeparator()
-        action_del = menu.addAction("刪除選中節點 (Remove selected)")
+        action_del = menu.addAction("Remove Selected Nodes")
 
         action = menu.exec(self.table.mapToGlobal(pos))
         if action == action_edit:
@@ -652,55 +654,77 @@ class NodesPage(QWidget):
                 QMessageBox.information(self, "Done", f"{added_count} new node(s) added via Add button!")
 
     def _on_copy_nodes(self) -> None:
-        """複製選中節點的 URI 資訊"""
+        """Copy selected nodes as valid share URIs."""
         selected_rows = sorted(
             set(idx.row() for idx in self.table.selectedIndexes())
         )
         if not selected_rows:
             return
-            
-        uris = []
+
+        from parsers.uri_parsers import build_node_uri
+
+        uris: list[str] = []
+        copy_errors: list[str] = []
         for row in selected_rows:
             node = self._table_row_to_node.get(row)
             if node:
-                uri = node.raw_dict.get("uri", "")
-                if not uri:
-                    uri = f"{node.node_type}://{node.server}:{node.port}#{node.name}"
-                uris.append(uri)
-                
+                try:
+                    uris.append(build_node_uri(node))
+                except ValueError as err:
+                    copy_errors.append(f"{node.name}: {err}")
+
+        if not uris:
+            detail = "\n".join(copy_errors[:5])
+            if len(copy_errors) > 5:
+                detail += f"\n...and {len(copy_errors) - 5} more."
+            message = "None of the selected nodes could be exported as share URIs."
+            if detail:
+                message += f"\n\n{detail}"
+            QMessageBox.warning(self, "Copy Failed", message)
+            return
+
         clipboard = QApplication.clipboard()
         clipboard.setText("\n".join(uris))
-        QMessageBox.information(self, "Success", f"Copied {len(uris)} URIs to clipboard.")
+        message = f"Copied {len(uris)} URI(s) to clipboard."
+        if copy_errors:
+            detail = "\n".join(copy_errors[:5])
+            if len(copy_errors) > 5:
+                detail += f"\n...and {len(copy_errors) - 5} more."
+            message += f"\n\nSkipped {len(copy_errors)} node(s) that could not be exported:\n{detail}"
+        QMessageBox.information(self, "Success", message)
 
     def _on_paste_nodes(self) -> None:
-        """從剪貼簿讀取多行文字並嘗試解析為節點（支援批量 socks5）"""
+        """Parse clipboard content with the subscription parser and import all valid nodes."""
         clipboard = QApplication.clipboard()
         text = clipboard.text().strip()
         if not text:
             QMessageBox.warning(self, "Notice", "Clipboard is empty!")
             return
-            
-        lines = text.splitlines()
-        added_count = 0
-        from parsers.uri_parsers import parse_single_uri
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                node = parse_single_uri(line, source_sub="Pasted")
-                self.app_state.nodes.append(node)
-                added_count += 1
-            except Exception:
-                pass # 忽略無法解析的行
-                
-        if added_count > 0:
+
+        from parsers.subscription_fetcher import parse_text_only
+
+        nodes, errors = parse_text_only(text, sub_name="Pasted")
+        for node in nodes:
+            self.app_state.nodes.append(node)
+
+        if nodes:
             self.refresh_table()
             self.data_changed.emit()
-            QMessageBox.information(self, "Success", f"Successfully imported {added_count} nodes from clipboard!")
+            message = f"Successfully imported {len(nodes)} node(s) from clipboard."
+            if errors:
+                detail = "\n".join(errors[:5])
+                if len(errors) > 5:
+                    detail += f"\n...and {len(errors) - 5} more."
+                message += f"\n\nSkipped {len(errors)} invalid item(s):\n{detail}"
+            QMessageBox.information(self, "Success", message)
         else:
-            QMessageBox.warning(self, "Failed", "No valid proxy URIs found in clipboard.")
+            detail = "\n".join(errors[:5]) if errors else ""
+            if len(errors) > 5:
+                detail += f"\n...and {len(errors) - 5} more."
+            message = "No valid nodes were found in the clipboard."
+            if detail:
+                message += f"\n\n{detail}"
+            QMessageBox.warning(self, "Import Failed", message)
 
     def _on_test_tcping(self) -> None:
         """多執行緒測試選定節點的 TCP 延遲"""

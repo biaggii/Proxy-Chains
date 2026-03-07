@@ -95,18 +95,18 @@ class ProcessRunner:
             )
         except FileNotFoundError:
             if on_log:
-                on_log(f"[錯誤] 找不到執行檔: {command[0]}")
+                on_log(f"[Error] Executable not found: {command[0]}")
             self._process = None
             return False
         except Exception as err:
             if on_log:
-                on_log(f"[錯誤] 啟動進程失敗: {err}")
+                on_log(f"[Error] Failed to start process: {err}")
             self._process = None
             return False
 
         if on_log:
-            on_log(f"[資訊] 進程已啟動 (PID={self._process.pid})")
-            on_log(f"[資訊] 命令: {' '.join(command)}")
+            on_log(f"[Info] Process started (PID={self._process.pid})")
+            on_log(f"[Info] Command: {' '.join(command)}")
 
         # 啟動背景執行緒讀 log
         self._log_thread = threading.Thread(
@@ -135,7 +135,7 @@ class ProcessRunner:
                 pass  # 進程可能已經自己結束了
 
             if self._on_log:
-                self._on_log("[資訊] 進程已停止")
+                self._on_log("[Info] Process stopped")
 
         self._process = None
 
@@ -180,11 +180,11 @@ class ProcessRunner:
             success = result.returncode == 0
             return success, output.strip()
         except FileNotFoundError:
-            return False, f"找不到執行檔: {command[0]}"
+            return False, f"Executable not found: {command[0]}"
         except subprocess.TimeoutExpired:
-            return False, f"命令執行超時（{timeout_seconds} 秒）"
+            return False, f"Command timed out ({timeout_seconds} seconds)"
         except Exception as err:
-            return False, f"執行命令時發生錯誤: {err}"
+            return False, f"Error while running command: {err}"
 
     # ============================================================
     # 私有方法：背景讀取 log
@@ -211,7 +211,7 @@ class ProcessRunner:
         if self._process is not None:
             exit_code = self._process.poll()
             if exit_code is not None and self._on_log:
-                self._on_log(f"[資訊] 進程結束，exit code = {exit_code}")
+                self._on_log(f"[Info] Process exited with code {exit_code}")
         
         # 呼叫 on_exit
         if self._on_exit:

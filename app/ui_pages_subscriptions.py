@@ -1,11 +1,10 @@
 """
-ui_pages_subscriptions.py — 訂閱管理頁面
+Subscriptions management page.
 
-功能：
-  - 顯示所有訂閱（表格：名稱、URL、類型、上次更新、節點數）
-  - 新增訂閱（名稱 + URL + 類型）
-  - 刪除選中的訂閱
-  - Update Now（下載 + 解析 + 存入 state）
+Responsibilities:
+  - List all configured subscription sources
+  - Add and remove sources
+  - Refresh one or many sources and import nodes into the workspace
 """
 
 from PySide6.QtWidgets import (
@@ -19,9 +18,8 @@ from models.app_state import AppState
 
 
 class SubscriptionsPage(QWidget):
-    """訂閱管理頁面"""
+    """Manage subscription sources and refresh imported nodes."""
 
-    # 當訂閱更新後，通知主窗口刷新其他頁面
     data_changed = Signal()
 
     def __init__(self, app_state: "AppState", parent=None):
@@ -30,11 +28,18 @@ class SubscriptionsPage(QWidget):
         self._init_ui()
 
     def _init_ui(self) -> None:
-        """建立 UI 元件"""
+        """Build the page widgets."""
         layout = QVBoxLayout(self)
+        self.summary_label = QLabel()
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
 
-        # ---------- 新增區域 ----------
-        add_group = QGroupBox("Add Subscription")
+        self.feedback_label = QLabel("No source activity yet.")
+        self.feedback_label.setWordWrap(True)
+        self._set_feedback("No source activity yet.", "info")
+        layout.addWidget(self.feedback_label)
+
+        add_group = QGroupBox("Import Source")
         add_form = QFormLayout()
 
         self.input_name = QLineEdit()
@@ -49,14 +54,13 @@ class SubscriptionsPage(QWidget):
         self.input_type.addItems(["auto", "clash", "v2rayn"])
         add_form.addRow("Type:", self.input_type)
 
-        btn_add = QPushButton("➕ Add Subscription")
+        btn_add = QPushButton("Save Source")
         btn_add.clicked.connect(self._on_add_subscription)
         add_form.addRow(btn_add)
 
         add_group.setLayout(add_form)
         layout.addWidget(add_group)
 
-        # ---------- 訂閱列表 ----------
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(
@@ -68,27 +72,27 @@ class SubscriptionsPage(QWidget):
         self.table.setSelectionBehavior(
             QTableWidget.SelectionBehavior.SelectRows
         )
+        self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table)
 
-        # ---------- 按鈕列 ----------
         btn_row = QHBoxLayout()
 
-        btn_update = QPushButton("🔄 Update Selected (Download & Parse)")
+        btn_update = QPushButton("Update Selected")
         btn_update.clicked.connect(self._on_update_selected)
         btn_row.addWidget(btn_update)
 
-        btn_update_all = QPushButton("🔄 Update All")
+        btn_update_all = QPushButton("Update All")
         btn_update_all.clicked.connect(self._on_update_all)
         btn_row.addWidget(btn_update_all)
 
-        btn_delete = QPushButton("🗑️ Delete Selected")
+        btn_delete = QPushButton("Delete Selected")
         btn_delete.clicked.connect(self._on_delete_selected)
         btn_row.addWidget(btn_delete)
 
         layout.addLayout(btn_row)
 
     def refresh_table(self) -> None:
-        """重新載入表格資料"""
+        """Reload table data from the current application state."""
         self.table.setRowCount(len(self.app_state.subscriptions))
         for row, sub in enumerate(self.app_state.subscriptions):
             self.table.setItem(row, 0, QTableWidgetItem(sub.name))
@@ -96,9 +100,18 @@ class SubscriptionsPage(QWidget):
             self.table.setItem(row, 2, QTableWidgetItem(sub.sub_type))
             self.table.setItem(row, 3, QTableWidgetItem(sub.last_update or "Not Updated"))
             self.table.setItem(row, 4, QTableWidgetItem(str(sub.node_count)))
+        if self.app_state.subscriptions:
+            self.summary_label.setText(
+                f"{len(self.app_state.subscriptions)} source(s) configured. "
+                "Keep provider links here. Updating a source refreshes the nodes that appear in the workspace."
+            )
+        else:
+            self.summary_label.setText(
+                "No sources configured yet. Add a provider link here, or skip this page and paste nodes directly into the Nodes tab."
+            )
 
     def _on_add_subscription(self) -> None:
-        """新增訂閱按鈕的事件"""
+        """Handle the add-source action."""
         name = self.input_name.text().strip()
         url = self.input_url.text().strip()
         sub_type = self.input_type.currentText()
@@ -114,31 +127,33 @@ class SubscriptionsPage(QWidget):
         new_sub = Subscription(name=name, url=url, sub_type=sub_type)
         self.app_state.subscriptions.append(new_sub)
 
-        # 清空輸入欄
         self.input_name.clear()
         self.input_url.clear()
 
         self.refresh_table()
+        self._set_feedback(f"Saved source '{new_sub.name}'.", "success")
         self.data_changed.emit()
 
     def _on_delete_selected(self) -> None:
-        """刪除選中的訂閱"""
+        """Delete the selected subscription rows."""
         selected_rows = set(idx.row() for idx in self.table.selectedIndexes())
         if not selected_rows:
             QMessageBox.information(self, "Notice", "Please select a subscription to delete")
             return
 
-        # 從大到小刪，避免 index 錯位
+        deleted_count = 0
         for row in sorted(selected_rows, reverse=True):
             if row < len(self.app_state.subscriptions):
                 sub = self.app_state.subscriptions[row]
                 self.app_state.remove_subscription_and_nodes(sub.sub_id)
+                deleted_count += 1
 
         self.refresh_table()
+        self._set_feedback(f"Removed {deleted_count} source(s) and their imported nodes.", "info")
         self.data_changed.emit()
 
     def _on_update_selected(self) -> None:
-        """更新選中的訂閱"""
+        """Refresh the currently selected subscription rows."""
         selected_rows = set(idx.row() for idx in self.table.selectedIndexes())
         if not selected_rows:
             QMessageBox.information(self, "Notice", "Please select a subscription to update")
@@ -147,7 +162,7 @@ class SubscriptionsPage(QWidget):
         self._do_update_subs(list(selected_rows))
 
     def _on_update_all(self) -> None:
-        """更新全部訂閱"""
+        """Refresh all configured subscription sources."""
         all_rows = list(range(len(self.app_state.subscriptions)))
         if not all_rows:
             QMessageBox.information(self, "Notice", "No subscriptions to update")
@@ -155,7 +170,7 @@ class SubscriptionsPage(QWidget):
         self._do_update_subs(all_rows)
 
     def _do_update_subs(self, row_indices: list[int]) -> None:
-        """實際執行下載並解析"""
+        """Download and parse the selected sources."""
         from parsers.subscription_fetcher import fetch_and_parse
 
         all_errors: list[str] = []
@@ -166,26 +181,38 @@ class SubscriptionsPage(QWidget):
                 continue
             sub = self.app_state.subscriptions[row]
 
-            # 先移除舊節點
             self.app_state.nodes = [
                 n for n in self.app_state.nodes if n.source_sub != sub.name
             ]
 
-            # 下載並解析
             new_nodes, errors = fetch_and_parse(sub)
             self.app_state.nodes.extend(new_nodes)
             total_new_nodes += len(new_nodes)
             all_errors.extend(errors)
 
-        # 顯示結果
-        msg = f"Update completed! Fetched {total_new_nodes} nodes."
+        message = (
+            f"Update completed. Imported {total_new_nodes} node(s) from "
+            f"{len(row_indices)} source(s)."
+        )
         if all_errors:
-            msg += f"\n\n⚠️ {len(all_errors)} Errors encountered:\n"
-            msg += "\n".join(all_errors[:10])
-            if len(all_errors) > 10:
-                msg += f"\n...and {len(all_errors) - 10} more errors"
-
-        QMessageBox.information(self, "Update Result", msg)
+            message += f"\n\n{len(all_errors)} issue(s) were reported:\n"
+            message += "\n".join(all_errors[:5])
+            if len(all_errors) > 5:
+                message += f"\n...and {len(all_errors) - 5} more"
 
         self.refresh_table()
+        self._set_feedback(message, "warning" if all_errors else "success")
         self.data_changed.emit()
+
+    def _set_feedback(self, message: str, level: str) -> None:
+        colors = {
+            "success": ("#ecfdf3", "#166534"),
+            "warning": ("#fff7ed", "#9a3412"),
+            "error": ("#fef2f2", "#991b1b"),
+            "info": ("#eff6ff", "#1d4ed8"),
+        }
+        background, foreground = colors.get(level, colors["info"])
+        self.feedback_label.setText(message)
+        self.feedback_label.setStyleSheet(
+            f"padding: 8px 10px; border-radius: 8px; background: {background}; color: {foreground}; border: 1px solid {foreground};"
+        )

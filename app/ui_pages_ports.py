@@ -1,10 +1,10 @@
 """
-ui_pages_ports.py — 端口映射管理頁面
+Port binding management page.
 
-功能：
-  - 新增/刪除 port mapping（listen_host, listen_port, bind_chain）
-  - 批量建立（起始 port + 數量 + 分配模式）
-  - 顯示代理設定（一鍵複製）
+Responsibilities:
+  - Create and delete local port bindings
+  - Batch-create bindings with different assignment strategies
+  - Control the dedicated TUN route target
 """
 
 from PySide6.QtWidgets import (
@@ -64,7 +64,7 @@ class ToggleSwitch(QCheckBox):
 
 
 class PortsPage(QWidget):
-    """端口映射管理頁面"""
+    """Manage local bindings and the optional TUN route."""
 
     data_changed = Signal()
 
@@ -75,13 +75,42 @@ class PortsPage(QWidget):
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
+        self.summary_label = QLabel()
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
 
-        # ---------- 新增單一端口 ----------
+        self.feedback_label = QLabel("No routing changes yet.")
+        self.feedback_label.setWordWrap(True)
+        self._set_feedback("No routing changes yet.", "info")
+        layout.addWidget(self.feedback_label)
+
+        tun_group = QGroupBox("System TUN Mode")
+        tun_layout = QFormLayout()
+        self.tun_switch = ToggleSwitch()
+        self.tun_switch.toggled.connect(self._on_tun_toggled)
+        self.lbl_tun = QLabel("Off")
+        tun_switch_row = QHBoxLayout()
+        tun_switch_row.addWidget(self.tun_switch)
+        tun_switch_row.addWidget(self.lbl_tun)
+        tun_layout.addRow("Status:", tun_switch_row)
+        self.tun_chain_combo = QComboBox()
+        self.tun_chain_combo.currentIndexChanged.connect(self._on_tun_chain_changed)
+        tun_layout.addRow("Use Chain:", self.tun_chain_combo)
+        self.tun_hint = QLabel(
+            "TUN sends system traffic through the selected chain. It works best when the app is running as Administrator."
+        )
+        self.tun_hint.setWordWrap(True)
+        tun_layout.addRow("", self.tun_hint)
+        tun_group.setLayout(tun_layout)
+        layout.addWidget(tun_group)
+
+        forms_row = QHBoxLayout()
+
         add_group = QGroupBox("Add Port Mapping")
         add_form = QFormLayout()
 
         self.input_host = QLineEdit("127.0.0.1")
-        add_form.addRow("Listen IP:", self.input_host)
+        add_form.addRow("Listen Address:", self.input_host)
 
         self.input_port = QSpinBox()
         self.input_port.setRange(1024, 65535)
@@ -89,21 +118,20 @@ class PortsPage(QWidget):
         add_form.addRow("Listen Port:", self.input_port)
 
         self.combo_chain = QComboBox()
-        add_form.addRow("Bind Chain:", self.combo_chain)
+        add_form.addRow("Use Chain:", self.combo_chain)
 
         self.input_remark = QLineEdit()
         self.input_remark.setPlaceholderText("Remarks (Optional)")
         add_form.addRow("Remarks:", self.input_remark)
 
-        btn_add = QPushButton("➕ Add")
+        btn_add = QPushButton("Create Mapping")
         btn_add.clicked.connect(self._on_add_single)
         add_form.addRow(btn_add)
 
         add_group.setLayout(add_form)
-        layout.addWidget(add_group)
+        forms_row.addWidget(add_group)
 
-        # ---------- 批量建立 ----------
-        batch_group = QGroupBox("Batch Create")
+        batch_group = QGroupBox("Batch Create Port Mappings")
         batch_form = QFormLayout()
 
         self.batch_start_port = QSpinBox()
@@ -117,20 +145,20 @@ class PortsPage(QWidget):
         batch_form.addRow("Count:", self.batch_count)
 
         self.batch_chain_combo = QComboBox()
-        batch_form.addRow("Bind Chain:", self.batch_chain_combo)
+        batch_form.addRow("Use Chain:", self.batch_chain_combo)
 
         self.batch_mode = QComboBox()
-        self.batch_mode.addItems(["Distribute across existing Chains", "Generate 1-Hop Chain per Node", "All to Same Chain"])
-        batch_form.addRow("Alloc Mode:", self.batch_mode)
+        self.batch_mode.addItems(["Use Each Existing Chain in Order", "Create One 1-Hop Chain per Node", "Use One Chain for All Ports"])
+        batch_form.addRow("Assignment Strategy:", self.batch_mode)
 
-        btn_batch = QPushButton("📦 Batch Create")
+        btn_batch = QPushButton("Create Batch")
         btn_batch.clicked.connect(self._on_batch_create)
         batch_form.addRow(btn_batch)
 
         batch_group.setLayout(batch_form)
-        layout.addWidget(batch_group)
+        forms_row.addWidget(batch_group)
+        layout.addLayout(forms_row)
 
-        # ---------- 映射表格 ----------
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(
@@ -142,153 +170,131 @@ class PortsPage(QWidget):
         self.table.setSelectionBehavior(
             QTableWidget.SelectionBehavior.SelectRows
         )
-        self.table.itemSelectionChanged.connect(self._on_selection_changed)
+        self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table)
 
-        # ---------- 按鈕 ----------
         btn_row = QHBoxLayout()
-        
-        self.tun_switch = ToggleSwitch()
-        self.tun_switch.setEnabled(False)
-        self.tun_switch.toggled.connect(self._on_tun_toggled)
-        self.lbl_tun = QLabel("🌍 Enable TUN (Select Row)")
-        self.lbl_tun.setStyleSheet("font-weight: bold;")
-        
-        tun_container = QWidget()
-        tun_cont_layout = QHBoxLayout(tun_container)
-        tun_cont_layout.setContentsMargins(0, 0, 10, 0)
-        tun_cont_layout.addWidget(self.tun_switch)
-        tun_cont_layout.addWidget(self.lbl_tun)
-        btn_row.addWidget(tun_container)
 
-        btn_copy = QPushButton("📋 Copy Proxy Settings")
+        btn_copy = QPushButton("Copy SOCKS5 Endpoints")
         btn_copy.clicked.connect(self._on_copy_proxy_list)
         btn_row.addWidget(btn_copy)
 
-        btn_delete = QPushButton("🗑️ Delete Selected")
+        btn_delete = QPushButton("Delete Selected")
         btn_delete.clicked.connect(self._on_delete_selected)
         btn_row.addWidget(btn_delete)
 
-        btn_clear = QPushButton("🗑️ Clear All")
+        btn_clear = QPushButton("Clear All")
         btn_clear.clicked.connect(self._on_clear_all)
         btn_row.addWidget(btn_clear)
 
         layout.addLayout(btn_row)
 
-    # ============================================================
-    # 刷新
-    # ============================================================
-
     def refresh_table(self) -> None:
-        """刷新表格和下拉選單"""
+        """Refresh the table and selector state."""
         self._refresh_chain_combos()
         self._refresh_mapping_table()
+        self._refresh_tun_panel()
+        self.summary_label.setText(
+            f"{len(self.app_state.port_mappings)} local binding(s). "
+            f"TUN is {'enabled' if self.app_state.enable_tun else 'disabled'}."
+        )
 
     def _refresh_chain_combos(self) -> None:
-        """刷新 chain 下拉選單"""
-        for combo in [self.combo_chain, self.batch_chain_combo]:
+        """Refresh chain selectors from the latest state."""
+        current_tun_chain = self.app_state.tun_chain_id
+        for combo in [self.combo_chain, self.batch_chain_combo, self.tun_chain_combo]:
+            combo.blockSignals(True)
             combo.clear()
             for chain in self.app_state.chains:
                 combo.addItem(
                     f"[{chain.chain_id}] {chain.name} ({chain.hop_count()} hop)",
                     userData=chain.chain_id,
                 )
+            combo.blockSignals(False)
+        if current_tun_chain:
+            index = self.tun_chain_combo.findData(current_tun_chain)
+            if index >= 0:
+                self.tun_chain_combo.blockSignals(True)
+                self.tun_chain_combo.setCurrentIndex(index)
+                self.tun_chain_combo.blockSignals(False)
 
     def _refresh_mapping_table(self) -> None:
-        """刷新端口映射表格"""
-        self.table.blockSignals(True)
+        """Refresh the bindings table."""
         self.table.setRowCount(len(self.app_state.port_mappings))
         for row, pm in enumerate(self.app_state.port_mappings):
             chain = self.app_state.find_chain_by_id(pm.chain_id)
             chain_display = f"[{pm.chain_id}] {chain.name}" if chain else pm.chain_id
+            if self.app_state.enable_tun and pm.chain_id == self.app_state.tun_chain_id:
+                chain_display = f"{chain_display}  [TUN]"
             
             item_id = QTableWidgetItem(pm.mapping_id)
             item_host = QTableWidgetItem(pm.listen_host)
             item_port = QTableWidgetItem(str(pm.listen_port))
             item_chain = QTableWidgetItem(chain_display)
             item_remark = QTableWidgetItem(pm.remark)
-            
-            # If TUN is enabled, lock everything except the TUN row
-            if self.app_state.enable_tun and self.app_state.tun_chain_id != pm.chain_id:
-                flags = item_id.flags() & ~Qt.ItemFlag.ItemIsEnabled & ~Qt.ItemFlag.ItemIsSelectable
-                item_id.setFlags(flags)
-                item_host.setFlags(flags)
-                item_port.setFlags(flags)
-                item_chain.setFlags(flags)
-                item_remark.setFlags(flags)
+            if self.app_state.enable_tun and pm.chain_id == self.app_state.tun_chain_id:
+                item_chain.setBackground(QColor("#dbeafe"))
 
             self.table.setItem(row, 0, item_id)
             self.table.setItem(row, 1, item_host)
             self.table.setItem(row, 2, item_port)
             self.table.setItem(row, 3, item_chain)
             self.table.setItem(row, 4, item_remark)
-        self.table.blockSignals(False)
 
-    # ============================================================
-    # 操作
-    # ============================================================
-    
-    def _on_selection_changed(self) -> None:
-        selected_rows = self.table.selectedIndexes()
-        
-        # If TUN is enabled, lock selection entirely to the active TUN row
-        if self.app_state.enable_tun:
-            tun_row = -1
-            for r, pm in enumerate(self.app_state.port_mappings):
-                if pm.chain_id == self.app_state.tun_chain_id:
-                    tun_row = r
-                    break
-            
-            if tun_row != -1:
-                # Force selection to the TUN row
-                self.table.blockSignals(True)
-                self.table.selectRow(tun_row)
-                self.table.blockSignals(False)
-                
-                self.tun_switch.setEnabled(True)
-                self.tun_switch.blockSignals(True)
-                self.tun_switch.setChecked(True)
-                self.tun_switch.position = 24.0
-                self.lbl_tun.setText("🌍 Disable TUN")
-                self.tun_switch.blockSignals(False)
-            return
-
-        if not selected_rows:
-            self.tun_switch.setEnabled(False)
-            self.lbl_tun.setText("🌍 Enable TUN (Select Row)")
-            return
-            
-        self.tun_switch.setEnabled(True)
-        row = sorted(set(idx.row() for idx in selected_rows))[0]
-        if row < len(self.app_state.port_mappings):
-            pm = self.app_state.port_mappings[row]
-            
+    def _on_tun_toggled(self, checked: bool) -> None:
+        chain_id = self.tun_chain_combo.currentData()
+        if checked and not chain_id:
+            QMessageBox.warning(self, "Notice", "Create a chain before enabling TUN")
             self.tun_switch.blockSignals(True)
             self.tun_switch.setChecked(False)
             self.tun_switch.position = 3.0
-            self.lbl_tun.setText("🌍 Enable TUN")
             self.tun_switch.blockSignals(False)
-
-    def _on_tun_toggled(self, checked: bool) -> None:
-        selected_rows = sorted(set(idx.row() for idx in self.table.selectedIndexes()))
-        if not selected_rows:
             return
-        row = selected_rows[0]
-        if row < len(self.app_state.port_mappings):
-            pm = self.app_state.port_mappings[row]
-            if checked: # Enable TUN
-                self.app_state.enable_tun = True
-                self.app_state.tun_chain_id = pm.chain_id
-                self.lbl_tun.setText("🌍 Disable TUN")
-            else: # Disable TUN
-                self.app_state.enable_tun = False
-                self.app_state.tun_chain_id = ""
-                self.lbl_tun.setText("🌍 Enable TUN")
+
+        self.app_state.enable_tun = checked
+        self.app_state.tun_chain_id = chain_id if checked else ""
+        self._refresh_tun_panel()
+        self._refresh_mapping_table()
+        self._set_feedback(
+            "TUN mode enabled. System traffic will use the selected chain."
+            if checked
+            else "TUN mode disabled. Local port bindings remain available.",
+            "info",
+        )
+        self.data_changed.emit()
+
+    def _on_tun_chain_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        chain_id = self.tun_chain_combo.currentData()
+        if self.app_state.enable_tun and chain_id:
+            self.app_state.tun_chain_id = chain_id
             self._refresh_mapping_table()
+            self._set_feedback("Updated the chain used by TUN mode.", "info")
             self.data_changed.emit()
 
+    def _refresh_tun_panel(self) -> None:
+        has_chains = self.tun_chain_combo.count() > 0
+        self.tun_switch.setEnabled(has_chains)
+        self.tun_chain_combo.setEnabled(has_chains)
+        self.tun_switch.blockSignals(True)
+        self.tun_switch.setChecked(self.app_state.enable_tun)
+        self.tun_switch.position = 24.0 if self.app_state.enable_tun else 3.0
+        self.tun_switch.blockSignals(False)
+        self.lbl_tun.setText("Enabled" if self.app_state.enable_tun else "Off")
+        if not has_chains:
+            self.tun_hint.setText("Create a chain first. TUN needs one route that will carry system traffic.")
+        elif self.app_state.enable_tun:
+            self.tun_hint.setText(
+                "All system traffic will use the selected chain. Running as Administrator is still recommended."
+            )
+        else:
+            self.tun_hint.setText(
+                "TUN sends system traffic through the selected chain. It works best when the app is running as Administrator."
+            )
+
     def _on_add_single(self) -> None:
-        """新增單一端口映射"""
+        """Create one new port mapping."""
         host = self.input_host.text().strip()
         port = self.input_port.value()
         chain_id = self.combo_chain.currentData()
@@ -309,24 +315,25 @@ class PortsPage(QWidget):
         self.app_state.port_mappings.append(pm)
         self.input_port.setValue(port + 1)
         self.refresh_table()
+        self._set_feedback(f"Created mapping {host}:{port}.", "success")
         self.data_changed.emit()
 
     def _on_batch_create(self) -> None:
-        """批量建立端口映射"""
+        """Create multiple port mappings in one action."""
         start_port = self.batch_start_port.value()
         count = self.batch_count.value()
         chain_id = self.batch_chain_combo.currentData()
         mode = self.batch_mode.currentText()
 
-        if not chain_id and mode == "All to Same Chain":
+        if not chain_id and mode == "Use One Chain for All Ports":
             QMessageBox.warning(self, "Notice", "Please select a Chain first")
             return
 
         from models.port_mapping import PortMapping
 
-        if mode == "All to Same Chain":
-            # 全部綁同一條 chain
-            created = 0
+        created = 0
+        feedback_message = ""
+        if mode == "Use One Chain for All Ports":
             for i in range(count):
                 port = start_port + i
                 if self.app_state.is_port_in_use(port):
@@ -334,16 +341,12 @@ class PortsPage(QWidget):
                 pm = PortMapping(listen_port=port, chain_id=chain_id)
                 self.app_state.port_mappings.append(pm)
                 created += 1
-            QMessageBox.information(
-                self, "Done", f"Created {created} port mappings (Same Chain)"
-            )
-        elif mode == "Distribute across existing Chains":
-            # 依序把現有的 Chain 分配給新的 Port
+            feedback_message = f"Created {created} mapping(s) using the same chain."
+        elif mode == "Use Each Existing Chain in Order":
             chains = self.app_state.chains
             if not chains:
                 QMessageBox.warning(self, "Notice", "No Chains exist, please create one first")
                 return
-            created = 0
             for i in range(min(count, len(chains))):
                 port = start_port + i
                 if self.app_state.is_port_in_use(port):
@@ -352,21 +355,15 @@ class PortsPage(QWidget):
                 pm = PortMapping(listen_port=port, chain_id=chain.chain_id)
                 self.app_state.port_mappings.append(pm)
                 created += 1
-            QMessageBox.information(
-                self, "Done",
-                f"Created {created} mappings (Distributed)"
-            )
+            feedback_message = f"Created {created} distributed mapping(s) across existing chains."
         else:
-            # 各節點單跳：每個節點建一條 1-hop chain + 一個 port mapping
             from models.chain import Chain
             nodes = self.app_state.nodes
-            created = 0
             for i in range(min(count, len(nodes))):
                 port = start_port + i
                 if self.app_state.is_port_in_use(port):
                     continue
                 node = nodes[i]
-                # 建立 1-hop chain
                 auto_chain = Chain(
                     name=f"Auto_{node.name}",
                     hop_node_ids=[node.node_id],
@@ -375,12 +372,11 @@ class PortsPage(QWidget):
                 pm = PortMapping(listen_port=port, chain_id=auto_chain.chain_id)
                 self.app_state.port_mappings.append(pm)
                 created += 1
-            QMessageBox.information(
-                self, "Done",
-                f"Created {created} Auto-Chains + mappings"
-            )
+            feedback_message = f"Created {created} single-hop chain(s) and mapping(s)."
 
         self.refresh_table()
+        if feedback_message:
+            self._set_feedback(feedback_message, "success" if created else "warning")
         self.data_changed.emit()
 
     def _on_delete_selected(self) -> None:
@@ -394,6 +390,7 @@ class PortsPage(QWidget):
             if row < len(self.app_state.port_mappings):
                 self.app_state.port_mappings.pop(row)
         self.refresh_table()
+        self._set_feedback(f"Removed {len(selected_rows)} mapping(s).", "info")
         self.data_changed.emit()
 
     def _on_clear_all(self) -> None:
@@ -405,21 +402,32 @@ class PortsPage(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             self.app_state.port_mappings.clear()
             self.refresh_table()
+            self._set_feedback("Cleared all port mappings.", "info")
             self.data_changed.emit()
 
     def _on_copy_proxy_list(self) -> None:
-        """複製代理設定到剪貼簿"""
+        """Copy all local SOCKS5 endpoints to the clipboard."""
         lines: list[str] = []
         for pm in self.app_state.port_mappings:
             lines.append(f"socks5://{pm.listen_host}:{pm.listen_port}")
         if not lines:
-            QMessageBox.information(self, "Notice", "No port mappings to copy")
+            self._set_feedback("No port mappings are available to copy.", "warning")
             return
         text = "\n".join(lines)
         clipboard = QApplication.clipboard()
         if clipboard:
             clipboard.setText(text)
-        QMessageBox.information(
-            self, "Copied",
-            f"Copied {len(lines)} lines to clipboard:\n\n{text[:500]}"
+        self._set_feedback(f"Copied {len(lines)} SOCKS5 endpoint(s) to the clipboard.", "success")
+
+    def _set_feedback(self, message: str, level: str) -> None:
+        colors = {
+            "success": ("#ecfdf3", "#166534"),
+            "warning": ("#fff7ed", "#9a3412"),
+            "error": ("#fef2f2", "#991b1b"),
+            "info": ("#eff6ff", "#1d4ed8"),
+        }
+        background, foreground = colors.get(level, colors["info"])
+        self.feedback_label.setText(message)
+        self.feedback_label.setStyleSheet(
+            f"padding: 8px 10px; border-radius: 8px; background: {background}; color: {foreground}; border: 1px solid {foreground};"
         )

@@ -51,19 +51,19 @@ def download_subscription_text(
 
     except requests.exceptions.Timeout:
         raise TimeoutError(
-            f"下載訂閱超時（{timeout_seconds} 秒）: {url}"
+            f"Subscription download timed out ({timeout_seconds} seconds): {url}"
         )
     except requests.exceptions.ConnectionError as err:
         raise ConnectionError(
-            f"無法連線到訂閱伺服器: {url}\n原因: {err}"
+            f"Unable to connect to subscription server: {url}\nReason: {err}"
         )
     except requests.exceptions.HTTPError as err:
         raise ConnectionError(
-            f"訂閱伺服器回傳錯誤 (HTTP {response.status_code}): {url}\n原因: {err}"
+            f"Subscription server returned an error (HTTP {response.status_code}): {url}\nReason: {err}"
         )
     except Exception as err:
         raise ConnectionError(
-            f"下載訂閱時發生未預期的錯誤: {url}\n原因: {err}"
+            f"Unexpected error while downloading subscription: {url}\nReason: {err}"
         )
 
 
@@ -123,7 +123,7 @@ def fetch_and_parse(
     try:
         raw_text = download_subscription_text(sub_url)
     except Exception as err:
-        return [], [f"訂閱 '{sub_name}' 下載失敗: {err}"]
+        return [], [f"Subscription '{sub_name}' download failed: {err}"]
 
     # --- 第 2 步：判斷類型（如果是 auto） ---
     if sub_type == SUB_TYPE_AUTO:
@@ -136,7 +136,7 @@ def fetch_and_parse(
         node_list, error_list = parse_v2rayn_subscription(raw_text, sub_name)
     else:
         node_list = []
-        error_list = [f"訂閱 '{sub_name}' 的類型 '{sub_type}' 無法辨識"]
+        error_list = [f"Subscription '{sub_name}' has unsupported type '{sub_type}'"]
 
     # --- 第 4 步：更新訂閱的 metadata ---
     # 取得台北時間 (UTC+8)
@@ -154,7 +154,7 @@ def fetch_and_parse(
 
 def parse_text_only(
     raw_text: str,
-    sub_name: str = "手動輸入",
+    sub_name: str = "Manual Input",
     sub_type: str = SUB_TYPE_AUTO,
 ) -> tuple[list[Node], list[str]]:
     """
@@ -168,4 +168,4 @@ def parse_text_only(
     elif sub_type == SUB_TYPE_V2RAYN:
         return parse_v2rayn_subscription(raw_text, sub_name)
     else:
-        return [], [f"類型 '{sub_type}' 無法辨識"]
+        return [], [f"Unsupported subscription type '{sub_type}'"]

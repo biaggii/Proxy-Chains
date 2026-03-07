@@ -8,7 +8,7 @@ ui_pages_logs.py — 核心 Log 顯示頁面
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QPlainTextEdit, QLabel,
+    QPlainTextEdit, QLabel, QApplication,
 )
 from PySide6.QtCore import Signal, Slot, QTimer
 
@@ -28,7 +28,11 @@ class LogsPage(QWidget):
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel("Core Engine Logs:"))
+        self.summary_label = QLabel(
+            "Runtime output appears here while applying, verifying, or running the selected core."
+        )
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
 
         # Log 文字區域（唯讀）
         self.log_area = QPlainTextEdit()
@@ -49,6 +53,12 @@ class LogsPage(QWidget):
         btn_clear = QPushButton("🧹 Clear Logs")
         btn_clear.clicked.connect(self._on_clear)
         btn_row.addWidget(btn_clear)
+
+        btn_copy = QPushButton("Copy Snapshot")
+        btn_copy.clicked.connect(self._on_copy_snapshot)
+        btn_row.addWidget(btn_copy)
+
+        btn_row.addStretch()
         layout.addLayout(btn_row)
 
     @Slot(str)
@@ -70,6 +80,14 @@ class LogsPage(QWidget):
     def _on_clear(self) -> None:
         """清除所有 log"""
         self.log_area.clear()
+
+    def _on_copy_snapshot(self) -> None:
+        text = self.log_area.toPlainText().strip()
+        if not text:
+            return
+        clipboard = QApplication.clipboard()
+        if clipboard:
+            clipboard.setText(text)
 
     def refresh_table(self) -> None:
         """LogsPage 不需要刷新表格，但介面統一需要這個方法"""

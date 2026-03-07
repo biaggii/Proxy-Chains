@@ -1,10 +1,10 @@
 """
-ui_pages_settings.py — 設定頁面
+Application settings page.
 
-功能：
-  - 選擇核心種類（sing-box / xray / mihomo）
-  - 設定核心執行檔路徑
-  - 顯示 config 生成路徑
+Responsibilities:
+  - Choose the active core engine
+  - Configure executable and config output paths
+  - Adjust startup, advanced network, and profile import/export options
 """
 
 from PySide6.QtWidgets import (
@@ -21,7 +21,7 @@ from utils.autorun import set_autorun
 
 
 class SettingsPage(QWidget):
-    """設定頁面"""
+    """Configure runtime, startup, and profile settings."""
 
     data_changed = Signal()
 
@@ -32,6 +32,14 @@ class SettingsPage(QWidget):
 
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
+
+        self.feedback_label = QLabel("Review the Home tab for readiness hints after saving settings.")
+        self.feedback_label.setWordWrap(True)
+        self._set_feedback(
+            "Review the Home tab for readiness hints after saving settings.",
+            "info",
+        )
+        main_layout.addWidget(self.feedback_label)
         
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -40,76 +48,80 @@ class SettingsPage(QWidget):
         scroll_widget = QWidget()
         layout = QVBoxLayout(scroll_widget)
 
-        # ---------- 核心設定 ----------
-        core_group = QGroupBox("Core Engine Settings")
+        core_group = QGroupBox("Basic Setup")
         core_form = QFormLayout()
 
-        # 核心類型
         self.combo_core_type = QComboBox()
         self.combo_core_type.addItems(["sing-box", "xray", "mihomo"])
         self.combo_core_type.currentTextChanged.connect(self._on_core_type_changed)
         core_form.addRow("Core Type:", self.combo_core_type)
 
-        # exe 路徑
         exe_row = QHBoxLayout()
         self.input_exe_path = QLineEdit()
-        self.input_exe_path.setPlaceholderText("Select Core Executable Path...")
+        self.input_exe_path.setPlaceholderText("Select a core executable path")
         exe_row.addWidget(self.input_exe_path)
-        btn_browse = QPushButton("📁 Browse...")
+        btn_browse = QPushButton("Browse")
         btn_browse.clicked.connect(self._on_browse_exe)
         exe_row.addWidget(btn_browse)
         core_form.addRow("Executable Path:", exe_row)
 
-        # config 輸出目錄
         cfg_row = QHBoxLayout()
         self.input_config_dir = QLineEdit()
         cfg_row.addWidget(self.input_config_dir)
-        btn_browse_cfg = QPushButton("📁 Browse...")
+        btn_browse_cfg = QPushButton("Browse")
         btn_browse_cfg.clicked.connect(self._on_browse_config)
         cfg_row.addWidget(btn_browse_cfg)
         core_form.addRow("Config Output Dir:", cfg_row)
 
-        # log level
         self.combo_log_level = QComboBox()
         self.combo_log_level.addItems(["debug", "info", "warning", "error", "fatal"])
         core_form.addRow("Log Level:", self.combo_log_level)
 
-        # ipv6
-        self.check_ipv6 = QCheckBox("Enable IPv6")
-        core_form.addRow("", self.check_ipv6)
-        
-        # 進階設定
-        self.check_udp = QCheckBox("Enable UDP Forwarding")
-        core_form.addRow("", self.check_udp)
-        
-        self.check_sniffing = QCheckBox("Enable Sniffing (http/tls)")
-        core_form.addRow("", self.check_sniffing)
-        
-        self.check_allow_lan = QCheckBox("Allow connections from LAN")
-        core_form.addRow("", self.check_allow_lan)
-        
-        self.check_mux = QCheckBox("Enable Mux Multiplexing")
-        core_form.addRow("", self.check_mux)
-        
-        self.check_allow_insecure = QCheckBox("Allow Insecure (Ignore TLS errors)")
-        core_form.addRow("", self.check_allow_insecure)
-        
-        self.combo_singbox_mux = QComboBox()
-        self.combo_singbox_mux.addItems(["h2mux", "smux", "yamux"])
-        core_form.addRow("sing-box Mux Protocol:", self.combo_singbox_mux)
-        
-        self.check_fragment = QCheckBox("Enable Fragment")
-        core_form.addRow("", self.check_fragment)
-
-        btn_save = QPushButton("💾 Save Settings")
+        btn_save = QPushButton("Save Settings")
         btn_save.clicked.connect(self._on_save_settings)
         core_form.addRow(btn_save)
 
         core_group.setLayout(core_form)
         layout.addWidget(core_group)
 
-        # ---------- Startup Settings ----------
-        startup_group = QGroupBox("Startup Settings")
+        advanced_group = QGroupBox("Advanced Network Options")
+        advanced_form = QFormLayout()
+
+        self.check_ipv6 = QCheckBox("Enable IPv6")
+        advanced_form.addRow("", self.check_ipv6)
+
+        self.check_udp = QCheckBox("Enable UDP Forwarding")
+        advanced_form.addRow("", self.check_udp)
+
+        self.check_sniffing = QCheckBox("Enable Sniffing (HTTP/TLS)")
+        advanced_form.addRow("", self.check_sniffing)
+
+        self.check_allow_lan = QCheckBox("Allow connections from LAN")
+        advanced_form.addRow("", self.check_allow_lan)
+
+        self.check_mux = QCheckBox("Enable Mux Multiplexing")
+        advanced_form.addRow("", self.check_mux)
+
+        self.check_allow_insecure = QCheckBox("Allow insecure TLS")
+        advanced_form.addRow("", self.check_allow_insecure)
+
+        self.combo_singbox_mux = QComboBox()
+        self.combo_singbox_mux.addItems(["h2mux", "smux", "yamux"])
+        advanced_form.addRow("sing-box Mux Protocol:", self.combo_singbox_mux)
+
+        self.check_fragment = QCheckBox("Enable Fragment")
+        advanced_form.addRow("", self.check_fragment)
+
+        advanced_hint = QLabel(
+            "Leave most advanced options at their defaults unless your provider or route requires a change."
+        )
+        advanced_hint.setWordWrap(True)
+        advanced_form.addRow("", advanced_hint)
+
+        advanced_group.setLayout(advanced_form)
+        layout.addWidget(advanced_group)
+
+        startup_group = QGroupBox("Startup and Window")
         startup_form = QFormLayout()
         
         self.check_run_on_startup = QCheckBox("Run on Windows Startup")
@@ -118,34 +130,35 @@ class SettingsPage(QWidget):
         
         self.check_minimize_on_start = QCheckBox("Minimize to Tray on Startup")
         startup_form.addRow("", self.check_minimize_on_start)
+
+        self.check_close_to_tray = QCheckBox("Close to Tray Instead of Exiting")
+        startup_form.addRow("", self.check_close_to_tray)
         
         startup_group.setLayout(startup_form)
         layout.addWidget(startup_group)
 
-        # ---------- Data Management ----------
-        data_group = QGroupBox("Data Management (Import/Export)")
+        data_group = QGroupBox("Data Management")
         data_layout = QHBoxLayout()
         
-        btn_export = QPushButton("📤 Export Profile")
+        btn_export = QPushButton("Export Profile")
         btn_export.clicked.connect(self._on_export_data)
         data_layout.addWidget(btn_export)
         
-        btn_import = QPushButton("📥 Import Profile")
+        btn_import = QPushButton("Import Profile")
         btn_import.clicked.connect(self._on_import_data)
         data_layout.addWidget(btn_import)
         
         data_group.setLayout(data_layout)
         layout.addWidget(data_group)
 
-        # ---------- 資訊 ----------
-        info_group = QGroupBox("Usage Guide")
+        info_group = QGroupBox("Quick Start")
         info_layout = QVBoxLayout()
         info_text = QLabel(
-            "1. Add Subscriptions in 'Subscriptions' page and Update\n"
-            "2. Check nodes in 'Nodes' page\n"
-            "3. Create chains in 'Chains' page\n"
-            "4. Create bindings in 'Ports' page\n"
-            "5. Click Apply at the bottom to generate config, then Start Core\n"
+            "1. Start at Home to review the readiness checklist.\n"
+            "2. Add subscription sources or paste node URIs.\n"
+            "3. Build chains and port bindings in Routing.\n"
+            "4. Apply the configuration.\n"
+            "5. Start the core and watch the Logs tab for runtime details."
         )
         info_text.setWordWrap(True)
         info_layout.addWidget(info_text)
@@ -158,7 +171,7 @@ class SettingsPage(QWidget):
         main_layout.addWidget(scroll_area)
 
     def refresh_table(self) -> None:
-        """從 app_state 讀取設定並更新 UI"""
+        """Load settings from ``app_state`` into the form."""
         self.combo_core_type.setCurrentText(self.app_state.core_type)
         self.combo_log_level.setCurrentText(self.app_state.log_level)
         self.check_ipv6.setChecked(self.app_state.enable_ipv6)
@@ -171,6 +184,7 @@ class SettingsPage(QWidget):
         self.check_fragment.setChecked(self.app_state.enable_fragment)
         self.check_run_on_startup.setChecked(self.app_state.run_on_startup)
         self.check_minimize_on_start.setChecked(self.app_state.minimize_on_start)
+        self.check_close_to_tray.setChecked(self.app_state.close_to_tray)
         
         current_path = self.app_state.core_exe_paths.get(self.app_state.core_type, "")
         self.input_exe_path.setText(current_path)
@@ -182,14 +196,12 @@ class SettingsPage(QWidget):
             QMessageBox.warning(self, "Warning", "Failed to update Windows startup registry.")
 
     def _on_core_type_changed(self, text: str) -> None:
-        """核心類型改變時，嘗試自動尋找 ./bin/ 對應的執行檔"""
-        # 第一步：先看看這個核心之前有沒有存過路徑
+        """Try to resolve a sensible executable path for the chosen core."""
         saved_path = self.app_state.core_exe_paths.get(text, "")
         if saved_path:
              self.input_exe_path.setText(saved_path)
              return
 
-        # 如果沒有，試著去找它的預設位置
         default_path = self.app_state._get_default_exe_path(text)
         if default_path:
             self.input_exe_path.setText(default_path)
@@ -206,13 +218,13 @@ class SettingsPage(QWidget):
             )
 
     def _on_browse_config(self) -> None:
-        """Browse folder for config output"""
+        """Browse for the config output directory."""
         dir_path = QFileDialog.getExistingDirectory(self, "Select Profile Directory", self.app_state.config_output_dir)
         if dir_path:
             self.input_config_dir.setText(dir_path)
 
     def _on_browse_exe(self) -> None:
-        """瀏覽檔案選擇 exe"""
+        """Browse for a core executable."""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select Core Executable",
             "",
@@ -222,7 +234,7 @@ class SettingsPage(QWidget):
             self.input_exe_path.setText(file_path)
 
     def _on_save_settings(self) -> None:
-        """儲存設定到 app_state"""
+        """Persist the form values back into ``app_state``."""
         core_type = self.combo_core_type.currentText()
         self.app_state.core_type = core_type
         self.app_state.log_level = self.combo_log_level.currentText()
@@ -236,38 +248,37 @@ class SettingsPage(QWidget):
         self.app_state.enable_fragment = self.check_fragment.isChecked()
         self.app_state.run_on_startup = self.check_run_on_startup.isChecked()
         self.app_state.minimize_on_start = self.check_minimize_on_start.isChecked()
+        self.app_state.close_to_tray = self.check_close_to_tray.isChecked()
         self.app_state.config_output_dir = self.input_config_dir.text().strip()
         self.app_state.core_exe_paths[core_type] = self.input_exe_path.text().strip()
         
-        # Ensure registry matches
         set_autorun(self.app_state.run_on_startup)
         
         self.data_changed.emit()
-        QMessageBox.information(self, "Success", "Settings Saved")
+        self._set_feedback("Settings saved. Re-apply or restart the core if runtime behavior changed.", "success")
 
     def _on_export_data(self) -> None:
-        """Export state.json"""
+        """Export the current profile to a JSON file."""
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Export Profile",
-            os.path.join(self.app_state.config_output_dir, "my_profile.json"),
+            os.path.join(self.app_state.config_output_dir, "chainport_profile.json"),
             "JSON Files (*.json);;All Files (*.*)"
         )
         if not file_path:
             return
         
-        # We can temporarily change state_file_path and save
         original_path = self.app_state.state_file_path
         try:
             self.app_state.state_file_path = file_path
             self.app_state.save_to_file()
-            QMessageBox.information(self, "Success", "Profile exported successfully!")
+            self._set_feedback(f"Profile exported to {file_path}.", "success")
         except Exception as e:
             QMessageBox.warning(self, "Failed", f"Failed to export: {e}")
         finally:
             self.app_state.state_file_path = original_path
             
     def _on_import_data(self) -> None:
-        """Import state.json"""
+        """Import a previously exported profile file."""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Import Profile",
             self.app_state.config_output_dir,
@@ -275,20 +286,31 @@ class SettingsPage(QWidget):
         )
         if not file_path:
             return
-            
+        
         reply = QMessageBox.question(self, "Confirm Import", "This will overwrite all existing configurations. Continue?")
         if reply == QMessageBox.StandardButton.Yes:
-            # Load the chosen file by overwriting app_state
-            # We preserve the original state_file_path so auto-saves still go to the normal state file.
             original_path = self.app_state.state_file_path
             try:
                 self.app_state.state_file_path = file_path
                 self.app_state.load_from_file()
                 self.app_state.state_file_path = original_path
                 self.app_state.save_to_file()
-                self.data_changed.emit() # This triggers UI refresh across all tabs
+                self.data_changed.emit()
                 self.refresh_table()
-                QMessageBox.information(self, "Success", "Profile imported successfully!")
+                self._set_feedback(f"Profile imported from {file_path}.", "success")
             except Exception as e:
                 QMessageBox.warning(self, "Failed", f"Failed to import: {e}")
                 self.app_state.state_file_path = original_path
+
+    def _set_feedback(self, message: str, level: str) -> None:
+        colors = {
+            "success": ("#ecfdf3", "#166534"),
+            "warning": ("#fff7ed", "#9a3412"),
+            "error": ("#fef2f2", "#991b1b"),
+            "info": ("#eff6ff", "#1d4ed8"),
+        }
+        background, foreground = colors.get(level, colors["info"])
+        self.feedback_label.setText(message)
+        self.feedback_label.setStyleSheet(
+            f"padding: 8px 10px; border-radius: 8px; background: {background}; color: {foreground}; border: 1px solid {foreground};"
+        )

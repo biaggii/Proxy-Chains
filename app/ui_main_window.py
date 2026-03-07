@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QIcon, QAction, QCloseEvent
 from PySide6.QtCore import Qt, Signal, Slot, QObject, QEvent
-import subprocess
 import os
 
 from models.app_state import AppState
@@ -373,7 +372,22 @@ class MainWindow(QMainWindow):
         def on_exit_from_thread() -> None:
             self.log_bridge.stopped_signal.emit()
 
-        self.process_runner.start(start_cmd, on_log=on_log_from_thread, on_exit=on_exit_from_thread)
+        started = self.process_runner.start(
+            start_cmd,
+            on_log=on_log_from_thread,
+            on_exit=on_exit_from_thread,
+        )
+        if not started:
+            self._update_status(False)
+            self.statusBar().showMessage("Core Start Failed", 3000)
+            self.tabs.setCurrentWidget(self.page_logs)
+            QMessageBox.warning(
+                self,
+                "Start Failed",
+                "Core process failed to start. Check the Logs tab for details.",
+            )
+            return
+
         self._update_status(True)
         self.statusBar().showMessage("Core Started", 3000)
 
@@ -388,31 +402,12 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_stop(self) -> None:
-        """按下 Stop：停止核心，順便清所有可能殘留的殭屍進程"""
-        # 放棄檢查 is_running，強制停止並發送信號
+        """按下 Stop：停止目前追蹤的核心進程"""
         if self.process_runner.is_running():
             self.process_runner.stop()
         
         self._update_status(False)
         self.statusBar().showMessage("Core Stopped", 3000)
-
-        # 暴力清理可能卡住的背景進程 (ghost processes block port binding)
-        core = self.app_state.core_type
-        exe_name = ""
-        if core == "sing-box":
-            exe_name = "sing-box.exe"
-        elif core == "xray":
-            exe_name = "xray.exe"
-        elif core == "mihomo":
-            exe_name = "mihomo.exe"
-            
-        if exe_name:
-            try:
-                flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-                subprocess.run(["taskkill", "/F", "/IM", exe_name], creationflags=flags, capture_output=True)
-                self.page_logs.append_log(f"[System] Sent terminate signal to cleanup {exe_name} ghost processes.")
-            except Exception:
-                pass
 
     # ============================================================
     # 工具方法
@@ -443,5 +438,3 @@ class MainWindow(QMainWindow):
         else:
             self.lbl_status.setText("● Stopped")
             self.lbl_status.setStyleSheet("color: gray; font-weight: bold;")
-
-

@@ -66,7 +66,7 @@ class AppState:
         self.allow_lan: bool = False
         self.enable_mux: bool = False
         self.allow_insecure: bool = False
-        self.enable_fragment: bool = True
+        self.enable_fragment: bool = False
         self.singbox_mux_protocol: str = "h2mux"  # h2mux, smux, yamux
         
         # TUN 設定 (TUN Settings)
@@ -219,7 +219,7 @@ class AppState:
         self.allow_lan = state_dict.get("allow_lan", False)
         self.enable_mux = state_dict.get("enable_mux", False)
         self.allow_insecure = state_dict.get("allow_insecure", False)
-        self.enable_fragment = state_dict.get("enable_fragment", True)
+        self.enable_fragment = state_dict.get("enable_fragment", False)
         self.singbox_mux_protocol = state_dict.get("singbox_mux_protocol", "h2mux")
         self.enable_tun = state_dict.get("enable_tun", False)
         self.tun_chain_id = state_dict.get("tun_chain_id", "")

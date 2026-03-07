@@ -105,7 +105,7 @@ class SingBoxAdapter(CoreAdapterBase):
         if not app_state.enable_ipv6:
             route_rules.insert(0, {"ip_version": 6, "action": "reject"})
             
-        # 防止 TUN 路由迴圈並攔截 DNS, 以及區網直連
+        # 防止 TUN 路由迴圈、攔截 DNS，並讓區網維持直連
         if app_state.enable_tun:
             route_rules.insert(0, {
                 "process_name": [
@@ -122,11 +122,6 @@ class SingBoxAdapter(CoreAdapterBase):
             route_rules.insert(0, {
                 "protocol": ["dns"],
                 "action": "hijack-dns"
-            })
-            route_rules.insert(0, {
-                "network": ["udp"],
-                "port": [443],
-                "action": "reject"
             })
             route_rules.insert(0, {
                 "ip_is_private": True,
@@ -189,7 +184,7 @@ def _build_inbounds(port_mappings: list[PortMapping], app_state: AppState) -> li
     inbounds: list[dict] = []
     
     if app_state.enable_tun and app_state.tun_chain_id:
-        inbounds.append({
+        tun_inbound: dict[str, Any] = {
             "type": "tun",
             "tag": "IN_TUN",
             "interface_name": "singbox_tun",
@@ -197,10 +192,13 @@ def _build_inbounds(port_mappings: list[PortMapping], app_state: AppState) -> li
             "mtu": 9000,
             "auto_route": True,
             "strict_route": True,
-            "stack": "gvisor",
-            "sniff": True,
-            "sniff_override_destination": True
-        })
+            # mixed stack 會優先走系統 TCP stack，通常比 gvisor 更省 CPU。
+            "stack": "mixed",
+            "sniff": app_state.enable_sniffing,
+        }
+        if app_state.enable_sniffing:
+            tun_inbound["sniff_override_destination"] = True
+        inbounds.append(tun_inbound)
 
     for pm in port_mappings:
         inbound_dict: dict = {
@@ -293,10 +291,9 @@ def _node_to_singbox_outbound(node: Node, tag: str, app_state: AppState) -> dict
     return ob
 
 def _apply_advanced_outbound_settings(ob: dict, app_state: AppState) -> None:
-    # 避免斷流與不穩定的重要配置：開啟 TCP Fast Open、Multipath 與增加連線超時容忍度
+    """套用較保守的 outbound 穩定性設定。"""
     if ob.get("type") != "direct" and ob.get("type") != "block":
-        ob["tcp_fast_open"] = True
-        ob["tcp_multi_path"] = True
+        # 只保留連線超時，避免強制開啟高風險的 TCP 特性造成斷流。
         ob["connect_timeout"] = "10s"
 
     # 處理 insecure

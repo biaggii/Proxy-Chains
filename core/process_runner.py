@@ -12,7 +12,6 @@ GUI 層只需要呼叫這個模組的方法，不直接碰 subprocess。
 
 import subprocess
 import threading
-import time
 from typing import Callable
 
 
@@ -54,7 +53,7 @@ class ProcessRunner:
         on_log: Callable[[str], None] | None = None,
         cwd: str | None = None,
         **kwargs,
-    ) -> None:
+    ) -> bool:
         """
         啟動核心進程。
 
@@ -97,11 +96,13 @@ class ProcessRunner:
         except FileNotFoundError:
             if on_log:
                 on_log(f"[錯誤] 找不到執行檔: {command[0]}")
-            return
+            self._process = None
+            return False
         except Exception as err:
             if on_log:
                 on_log(f"[錯誤] 啟動進程失敗: {err}")
-            return
+            self._process = None
+            return False
 
         if on_log:
             on_log(f"[資訊] 進程已啟動 (PID={self._process.pid})")
@@ -113,6 +114,7 @@ class ProcessRunner:
             daemon=True,  # daemon thread：主程式關掉就自動結束
         )
         self._log_thread.start()
+        return True
 
     def stop(self) -> None:
         """停止核心進程"""

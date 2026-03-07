@@ -198,7 +198,8 @@ def _build_inbounds(port_mappings: list[PortMapping], app_state: AppState) -> li
             "auto_route": True,
             "strict_route": True,
             "stack": "gvisor",
-            "sniff": True
+            "sniff": True,
+            "sniff_override_destination": True
         })
 
     for pm in port_mappings:
@@ -209,6 +210,9 @@ def _build_inbounds(port_mappings: list[PortMapping], app_state: AppState) -> li
             "listen_port": pm.listen_port,
             "sniff": app_state.enable_sniffing,
         }
+        if app_state.enable_sniffing:
+            inbound_dict["sniff_override_destination"] = True
+            
         inbounds.append(inbound_dict)
     return inbounds
 
@@ -289,6 +293,12 @@ def _node_to_singbox_outbound(node: Node, tag: str, app_state: AppState) -> dict
     return ob
 
 def _apply_advanced_outbound_settings(ob: dict, app_state: AppState) -> None:
+    # 避免斷流與不穩定的重要配置：開啟 TCP Fast Open、Multipath 與增加連線超時容忍度
+    if ob.get("type") != "direct" and ob.get("type") != "block":
+        ob["tcp_fast_open"] = True
+        ob["tcp_multi_path"] = True
+        ob["connect_timeout"] = "10s"
+
     # 處理 insecure
     if app_state.allow_insecure and "tls" in ob:
         ob["tls"]["insecure"] = True

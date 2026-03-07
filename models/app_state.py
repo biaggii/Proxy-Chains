@@ -222,7 +222,7 @@ class AppState:
         self.enable_fragment = state_dict.get("enable_fragment", False)
         self.singbox_mux_protocol = state_dict.get("singbox_mux_protocol", "h2mux")
         self.enable_tun = state_dict.get("enable_tun", False)
-        self.tun_chain_id = state_dict.get("tun_chain_id", "")
+        self.tun_chain_id = state_dict.get("tun_chain_id") or ""
         self.run_on_startup = state_dict.get("run_on_startup", False)
         self.minimize_on_start = state_dict.get("minimize_on_start", False)
 

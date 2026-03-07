@@ -116,35 +116,35 @@ class SingBoxAdapter(CoreAdapterBase):
                 "outbound": "DIRECT"
             })
             route_rules.insert(0, {
-                "port": [53],
-                "action": "hijack-dns"
-            })
-            route_rules.insert(0, {
-                "protocol": ["dns"],
-                "action": "hijack-dns"
-            })
-            route_rules.insert(0, {
                 "ip_is_private": True,
                 "outbound": "DIRECT"
             })
+            if app_state.enable_sniffing:
+                route_rules.insert(0, {"protocol": ["dns"], "action": "hijack-dns"})
+                route_rules.insert(0, {"action": "sniff"})
+            else:
+                route_rules.insert(0, {
+                    "network": ["udp"],
+                    "port": [53],
+                    "action": "hijack-dns",
+                })
+
+        dns_config = _build_dns_config(chain_final_tag_map, app_state)
 
         # ---------- 4. 組裝完整配置 ----------
         full_config: dict[str, Any] = {
             "log": {"level": app_state.log_level, "timestamp": True},
-            "dns": {
-                "servers": [
-                    {"tag": "remote_dns", "type": "udp", "server": "8.8.8.8"}
-                ],
-                "final": "remote_dns",
-                "strategy": "ipv4_only" if not app_state.enable_ipv6 else "prefer_ipv4",
-                "independent_cache": True
-            },
+            "dns": dns_config,
             "inbounds": inbounds_list,
             "outbounds": outbounds_list,
             "route": {
                 "rules": route_rules,
                 "auto_detect_interface": True if app_state.enable_tun else False,
                 "final": chain_final_tag_map.get(app_state.tun_chain_id, "DIRECT") if app_state.enable_tun else "DIRECT",
+                "default_domain_resolver": {
+                    "server": "direct_dns",
+                    "strategy": "ipv4_only" if not app_state.enable_ipv6 else "prefer_ipv4",
+                },
             },
         }
         
@@ -213,6 +213,32 @@ def _build_inbounds(port_mappings: list[PortMapping], app_state: AppState) -> li
             
         inbounds.append(inbound_dict)
     return inbounds
+
+
+def _build_dns_config(
+    chain_final_tag_map: dict[str, str],
+    app_state: AppState,
+) -> dict[str, Any]:
+    """建立較穩定的 DNS 設定，避免 TUN DNS 被 UDP 或 SOCKS 限制卡死。"""
+    remote_dns: dict[str, Any] = {
+        "tag": "remote_dns",
+        "type": "tcp",
+        "server": "8.8.8.8",
+    }
+    if app_state.enable_tun:
+        tun_outbound = chain_final_tag_map.get(app_state.tun_chain_id)
+        if tun_outbound:
+            remote_dns["detour"] = tun_outbound
+
+    return {
+        "servers": [
+            remote_dns,
+            {"tag": "direct_dns", "type": "local"},
+        ],
+        "final": "remote_dns",
+        "strategy": "ipv4_only" if not app_state.enable_ipv6 else "prefer_ipv4",
+        "independent_cache": True,
+    }
 
 
 # ================================================================

@@ -40,7 +40,7 @@ def _generate_config(app_state: AppState) -> dict:
 
 
 def test_tun_mode_uses_mixed_stack_and_keeps_quic_available(tmp_path) -> None:
-    """TUN 模式應改用 mixed stack，且不再封鎖 udp/443。"""
+    """TUN 模式應使用 mixed stack，且不能再封鎖 QUIC。"""
     app_state = _build_app_state(tmp_path)
     app_state.enable_tun = True
     app_state.tun_chain_id = "chain1"
@@ -60,7 +60,7 @@ def test_tun_mode_uses_mixed_stack_and_keeps_quic_available(tmp_path) -> None:
 
 
 def test_tun_inbound_respects_sniff_setting(tmp_path) -> None:
-    """關閉 sniffing 時，TUN inbound 不應強制開啟嗅探。"""
+    """TUN inbound 應跟隨全域 sniff 設定。"""
     app_state = _build_app_state(tmp_path)
     app_state.enable_tun = True
     app_state.tun_chain_id = "chain1"
@@ -73,8 +73,44 @@ def test_tun_inbound_respects_sniff_setting(tmp_path) -> None:
     assert "sniff_override_destination" not in tun_inbound
 
 
+def test_tun_dns_uses_tcp_remote_server_and_direct_resolver(tmp_path) -> None:
+    """TUN DNS 應改走可代理的 TCP 上游，並保留 direct resolver。"""
+    app_state = _build_app_state(tmp_path)
+    app_state.enable_tun = True
+    app_state.tun_chain_id = "chain1"
+
+    config = _generate_config(app_state)
+    servers = {server["tag"]: server for server in config["dns"]["servers"]}
+
+    assert servers["remote_dns"]["type"] == "tcp"
+    assert servers["remote_dns"]["server"] == "8.8.8.8"
+    assert servers["remote_dns"]["detour"] == "CHAIN_chain1_H1"
+    assert servers["direct_dns"]["type"] == "local"
+    assert config["route"]["default_domain_resolver"]["server"] == "direct_dns"
+
+
+def test_non_tun_dns_does_not_set_invalid_direct_detour(tmp_path) -> None:
+    """非 TUN 模式下，DNS server 不應帶入無效的 DIRECT detour。"""
+    app_state = _build_app_state(tmp_path)
+
+    config = _generate_config(app_state)
+    servers = {server["tag"]: server for server in config["dns"]["servers"]}
+
+    assert "detour" not in servers["remote_dns"]
+
+
+def test_tun_route_adds_sniff_action_when_enabled(tmp_path) -> None:
+    """TUN 模式在開啟 sniffing 時應加入 sing-box sniff action。"""
+    app_state = _build_app_state(tmp_path)
+    app_state.enable_tun = True
+    app_state.tun_chain_id = "chain1"
+
+    config = _generate_config(app_state)
+    assert any(rule.get("action") == "sniff" for rule in config["route"]["rules"])
+
+
 def test_outbounds_keep_connect_timeout_without_aggressive_tcp_flags(tmp_path) -> None:
-    """outbound 應只保留 connect_timeout，不再強制開啟高風險 TCP 特性。"""
+    """outbound 應保留 connect_timeout，且不強制開啟高風險 TCP 特性。"""
     app_state = _build_app_state(tmp_path)
 
     config = _generate_config(app_state)

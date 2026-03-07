@@ -282,7 +282,7 @@ class PortsPage(QWidget):
                 self.lbl_tun.setText("🌍 Disable TUN")
             else: # Disable TUN
                 self.app_state.enable_tun = False
-                self.app_state.tun_chain_id = None
+                self.app_state.tun_chain_id = ""
                 self.lbl_tun.setText("🌍 Enable TUN")
             self._refresh_mapping_table()
             self.data_changed.emit()

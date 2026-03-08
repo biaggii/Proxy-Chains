@@ -33,7 +33,7 @@ The current UI is organized around six tabs:
 5. `Logs`
    Watch config validation output and live core logs.
 6. `Settings`
-   Configure the core executable, runtime options, startup behavior, and profile import/export.
+   Configure the core executable, runtime options, startup behavior, auto-start launch behavior, and profile import/export.
 
 Global actions stay available at the bottom of the window:
 
@@ -78,6 +78,7 @@ Recommended first-run sequence:
 - TUN mode routes system traffic through one selected chain.
 - TUN mode usually requires administrator privileges on Windows.
 - Use `Run as Admin` before starting the core when TUN is enabled.
+- Automatic app launch starts chains only and does not enable TUN.
 
 ## Project Structure
 

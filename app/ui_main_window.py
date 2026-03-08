@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QStatusBar, QSystemTrayIcon, QStyle, QMenu, QApplication
 )
 from PySide6.QtGui import QIcon, QAction, QCloseEvent
-from PySide6.QtCore import Qt, Signal, Slot, QObject, QEvent
+from PySide6.QtCore import Qt, Signal, Slot, QObject, QEvent, QTimer
 import os
 
 from models.app_state import AppState
@@ -49,6 +49,7 @@ class MainWindow(QMainWindow):
         self._init_tray_icon()
         self._connect_signals()
         self._load_and_refresh()
+        self._launch_actions_scheduled = False
 
     def _init_ui(self) -> None:
         """Create the main window widgets."""
@@ -412,74 +413,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_start(self) -> None:
         """Generate config files and start the selected core."""
-        if self.process_runner.is_running():
-            QMessageBox.information(self, "Notice", "Core is already running")
-            return
-
-        preflight = self._get_preflight_state()
-        if not preflight["can_start"]:
-            self._show_banner(preflight["detail"], "warning")
-            QMessageBox.warning(self, "Action Needed", preflight["detail"])
-            return
-
-        exe_path = self.app_state.core_exe_paths.get(self.app_state.core_type, "")
-        if not exe_path:
-            QMessageBox.warning(self, "Notice", "Please set executable path in Settings first")
-            return
-
-        adapter = self._get_current_adapter()
-        if adapter is None:
-            return
-
-        from core.singbox_adapter import SingBoxAdapter
-        from core.xray_adapter import XrayAdapter
-        from core.mihomo_adapter import MihomoAdapter
-        
-        all_adapters = [SingBoxAdapter(), XrayAdapter(), MihomoAdapter()]
-        for adp in all_adapters:
-            try:
-                path = adp.generate_config(self.app_state)[1]
-                self.page_logs.append_log(f"[Auto Gen] ✅ {adp.adapter_name()} config generated: {path}")
-            except Exception as err:
-                self.page_logs.append_log(f"[Auto Gen] ❌ {adp.adapter_name()} generation failed: {err}")
-
-        try:
-            _, config_path = adapter.generate_config(self.app_state)
-        except Exception as err:
-            QMessageBox.critical(self, "Error", f"Config generation failed: {err}")
-            return
-
-        start_cmd = adapter.get_start_command(config_path, exe_path)
-
-        def on_log_from_thread(text: str) -> None:
-            self.log_bridge.log_signal.emit(text)
-
-        def on_exit_from_thread() -> None:
-            self.log_bridge.stopped_signal.emit()
-
-        started = self.process_runner.start(
-            start_cmd,
-            on_log=on_log_from_thread,
-            on_exit=on_exit_from_thread,
-        )
-        if not started:
-            self._update_status(False)
-            self.statusBar().showMessage("Core Start Failed", 3000)
-            self._open_tab("logs")
-            QMessageBox.warning(
-                self,
-                "Start Failed",
-                "Core process failed to start. Check the Logs tab for details.",
-            )
-            self._show_banner("Core process failed to start. Check the Logs tab for details.", "error")
-            return
-
-        self._update_status(True)
-        self.statusBar().showMessage("Core Started", 3000)
-        self._show_banner("Core started successfully. Live output is available in Logs.", "success")
-
-        self._open_tab("logs")
-        self._refresh_action_state()
+        self._start_core(interactive=True)
 
     @Slot()
     def _on_core_exited(self) -> None:
@@ -500,7 +434,7 @@ class MainWindow(QMainWindow):
         self._show_banner("Core stopped.", "info")
         self._refresh_action_state()
 
-    def _get_current_adapter(self):
+    def _get_current_adapter(self, show_message: bool = True):
         """Return the adapter for the currently selected core type."""
         core_type = self.app_state.core_type
 
@@ -514,8 +448,134 @@ class MainWindow(QMainWindow):
             from core.mihomo_adapter import MihomoAdapter
             return MihomoAdapter()
         else:
-            QMessageBox.warning(self, "Error", f"Unknown core type: {core_type}")
+            if show_message:
+                QMessageBox.warning(self, "Error", f"Unknown core type: {core_type}")
             return None
+
+    def schedule_launch_actions(self) -> None:
+        """Run any deferred startup actions after the window is created."""
+        if self._launch_actions_scheduled:
+            return
+        self._launch_actions_scheduled = True
+        QTimer.singleShot(0, self._run_launch_actions)
+
+    def _run_launch_actions(self) -> None:
+        if self.app_state.auto_start_core:
+            if self.app_state.enable_tun:
+                self.app_state.enable_tun = False
+                self.page_logs.append_log(
+                    "[Launch] TUN mode was disabled for automatic startup. "
+                    "Automatic launch starts chains only."
+                )
+                self._show_banner(
+                    "Automatic launch starts chains only. TUN stays off until you enable it manually.",
+                    "info",
+                )
+                self._refresh_all_pages()
+            self._start_core(interactive=False)
+
+    def _start_core(self, interactive: bool) -> bool:
+        if self.process_runner.is_running():
+            if interactive:
+                QMessageBox.information(self, "Notice", "Core is already running")
+            else:
+                self.page_logs.append_log("[Launch] Core is already running. Auto-start skipped.")
+            return False
+
+        preflight = self._get_preflight_state()
+        if not preflight["can_start"]:
+            message = str(preflight["detail"])
+            self._show_banner(message, "warning")
+            if interactive:
+                QMessageBox.warning(self, "Action Needed", message)
+            else:
+                self._notify_launch_issue(f"Auto-start skipped: {message}", "warning")
+            return False
+
+        exe_path = self.app_state.core_exe_paths.get(self.app_state.core_type, "")
+        adapter = self._get_current_adapter(show_message=interactive)
+        if adapter is None:
+            if not interactive:
+                self._notify_launch_issue("Auto-start skipped: unknown core type.", "error")
+            return False
+
+        from core.singbox_adapter import SingBoxAdapter
+        from core.xray_adapter import XrayAdapter
+        from core.mihomo_adapter import MihomoAdapter
+
+        all_adapters = [SingBoxAdapter(), XrayAdapter(), MihomoAdapter()]
+        for adp in all_adapters:
+            try:
+                path = adp.generate_config(self.app_state)[1]
+                self.page_logs.append_log(f"[Auto Gen] ✅ {adp.adapter_name()} config generated: {path}")
+            except Exception as err:
+                self.page_logs.append_log(f"[Auto Gen] ❌ {adp.adapter_name()} generation failed: {err}")
+
+        try:
+            _, config_path = adapter.generate_config(self.app_state)
+        except Exception as err:
+            if interactive:
+                QMessageBox.critical(self, "Error", f"Config generation failed: {err}")
+            else:
+                self._notify_launch_issue(f"Auto-start failed while generating config: {err}", "error")
+            return False
+
+        start_cmd = adapter.get_start_command(config_path, exe_path)
+
+        def on_log_from_thread(text: str) -> None:
+            self.log_bridge.log_signal.emit(text)
+
+        def on_exit_from_thread() -> None:
+            self.log_bridge.stopped_signal.emit()
+
+        started = self.process_runner.start(
+            start_cmd,
+            on_log=on_log_from_thread,
+            on_exit=on_exit_from_thread,
+        )
+        if not started:
+            self._update_status(False)
+            self.statusBar().showMessage("Core Start Failed", 3000)
+            self._open_tab("logs")
+            if interactive:
+                QMessageBox.warning(
+                    self,
+                    "Start Failed",
+                    "Core process failed to start. Check the Logs tab for details.",
+                )
+                self._show_banner("Core process failed to start. Check the Logs tab for details.", "error")
+            else:
+                self._notify_launch_issue("Auto-start failed. Check the Logs tab for details.", "error")
+            return False
+
+        self._update_status(True)
+        self.statusBar().showMessage("Core Started", 3000)
+        self._show_banner("Core started successfully. Live output is available in Logs.", "success")
+        if interactive:
+            self._open_tab("logs")
+        else:
+            self.page_logs.append_log("[Launch] Core started automatically on app launch.")
+            if self.tray_icon.isVisible() and not self.isVisible():
+                self.tray_icon.showMessage(
+                    "ChainPort Gateway",
+                    "Core started automatically after launch.",
+                    QSystemTrayIcon.Information,
+                    3000,
+                )
+        self._refresh_action_state()
+        return True
+
+    def _notify_launch_issue(self, message: str, level: str) -> None:
+        self._show_banner(message, level)
+        self.statusBar().showMessage(message, 5000)
+        self.page_logs.append_log(f"[Launch] {message}")
+        if self.tray_icon.isVisible():
+            icon = QSystemTrayIcon.Warning if level == "warning" else QSystemTrayIcon.Critical
+            self.tray_icon.showMessage("ChainPort Gateway", message, icon, 4000)
+        if not self.isVisible():
+            self.showNormal()
+            self.activateWindow()
+            self.raise_()
 
     def _update_status(self, is_running: bool) -> None:
         """Update the runtime status label in the global action bar."""

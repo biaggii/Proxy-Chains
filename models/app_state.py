@@ -76,6 +76,7 @@ class AppState:
         # 啟動設定 (Startup Settings)
         self.run_on_startup: bool = False
         self.minimize_on_start: bool = False
+        self.auto_start_core: bool = False
         self.close_to_tray: bool = True
 
     def _get_default_exe_path(self, core_type: str) -> str:
@@ -165,6 +166,7 @@ class AppState:
             "tun_chain_id": self.tun_chain_id,
             "run_on_startup": self.run_on_startup,
             "minimize_on_start": self.minimize_on_start,
+            "auto_start_core": self.auto_start_core,
             "close_to_tray": self.close_to_tray,
             "subscriptions": [s.to_dict() for s in self.subscriptions],
             "nodes": [n.to_dict() for n in self.nodes],
@@ -227,6 +229,7 @@ class AppState:
         self.tun_chain_id = state_dict.get("tun_chain_id") or ""
         self.run_on_startup = state_dict.get("run_on_startup", False)
         self.minimize_on_start = state_dict.get("minimize_on_start", False)
+        self.auto_start_core = state_dict.get("auto_start_core", False)
         self.close_to_tray = state_dict.get("close_to_tray", True)
 
         # 還原資料

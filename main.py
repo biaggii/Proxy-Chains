@@ -1,10 +1,8 @@
 """
-main.py — ChainPort Gateway 程式入口
+Application entry point for ChainPort Gateway.
 
-這個檔案就做三件事：
-  1. 建立 AppState（載入 state.json）
-  2. 建立 PySide6 QApplication
-  3. 顯示 MainWindow
+This module creates the persistent app state, starts Qt, and opens the main
+window with any requested launch actions.
 """
 
 import sys
@@ -23,21 +21,16 @@ from app.ui_main_window import MainWindow
 
 
 def main() -> None:
-    """程式主入口"""
+    """Start the desktop application."""
 
-    # ---------- 1. 建立 AppState ----------
-    # state.json 放在跟 main.py 同目錄
     state_file = os.path.join(project_root, "state.json")
     app_state = AppState(state_file_path=state_file)
 
-    # ---------- 2. 建立 QApplication ----------
     qt_app = QApplication(sys.argv)
 
-    # 設定全域字型（支援中文）
     font = QFont("Microsoft YaHei UI", 9)
     qt_app.setFont(font)
 
-    # 設定全域樣式（簡單美化）
     qt_app.setStyleSheet("""
         QMainWindow {
             background-color: #f5f5f5;
@@ -79,17 +72,13 @@ def main() -> None:
         }
     """)
 
-    # ---------- 3. 顯示 MainWindow ----------
     qt_app.setQuitOnLastWindowClosed(False)
     window = MainWindow(app_state)
     
     if not app_state.minimize_on_start:
         window.show()
-    else:
-        # User requested to run silently in the system tray
-        pass
+    window.schedule_launch_actions()
 
-    # ---------- 4. 進入事件迴圈 ----------
     sys.exit(qt_app.exec())
 
 

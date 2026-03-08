@@ -131,6 +131,13 @@ class SettingsPage(QWidget):
         self.check_minimize_on_start = QCheckBox("Minimize to Tray on Startup")
         startup_form.addRow("", self.check_minimize_on_start)
 
+        self.check_auto_start_core = QCheckBox("Start Core Automatically on App Launch")
+        self.check_auto_start_core.setToolTip(
+            "The app will refresh config files and start the selected core when it launches. "
+            "Automatic launch starts chains only and does not enable TUN."
+        )
+        startup_form.addRow("", self.check_auto_start_core)
+
         self.check_close_to_tray = QCheckBox("Close to Tray Instead of Exiting")
         startup_form.addRow("", self.check_close_to_tray)
         
@@ -184,6 +191,7 @@ class SettingsPage(QWidget):
         self.check_fragment.setChecked(self.app_state.enable_fragment)
         self.check_run_on_startup.setChecked(self.app_state.run_on_startup)
         self.check_minimize_on_start.setChecked(self.app_state.minimize_on_start)
+        self.check_auto_start_core.setChecked(self.app_state.auto_start_core)
         self.check_close_to_tray.setChecked(self.app_state.close_to_tray)
         
         current_path = self.app_state.core_exe_paths.get(self.app_state.core_type, "")
@@ -248,6 +256,7 @@ class SettingsPage(QWidget):
         self.app_state.enable_fragment = self.check_fragment.isChecked()
         self.app_state.run_on_startup = self.check_run_on_startup.isChecked()
         self.app_state.minimize_on_start = self.check_minimize_on_start.isChecked()
+        self.app_state.auto_start_core = self.check_auto_start_core.isChecked()
         self.app_state.close_to_tray = self.check_close_to_tray.isChecked()
         self.app_state.config_output_dir = self.input_config_dir.text().strip()
         self.app_state.core_exe_paths[core_type] = self.input_exe_path.text().strip()

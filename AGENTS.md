@@ -101,7 +101,7 @@ Parser errors should be actionable and include location plus reason.
 | Nodes | `app/ui_pages_nodes.py` | Node review, manual import, URI copy/paste, and chain helpers |
 | Routing | `app/ui_pages_routing.py` | Combined routing workspace that hosts Chains and Ports |
 | Logs | `app/ui_pages_logs.py` | Live stdout/stderr and validation output |
-| Settings | `app/ui_pages_settings.py` | Core executable, startup behavior, advanced options, and profile import/export |
+| Settings | `app/ui_pages_settings.py` | Core executable, startup behavior, auto-start launch behavior, advanced options, and profile import/export |
 
 Nested routing pages:
 

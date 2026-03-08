@@ -2,6 +2,7 @@
 # ChainPort Gateway — .gitignore
 # ============================================================
 # ------- proxy core ---------
+c.bat
 singbox_test.json
 bin/
 # ---------- Python ----------

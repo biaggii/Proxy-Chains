@@ -59,18 +59,17 @@ def test_tun_mode_uses_mixed_stack_and_keeps_quic_available(tmp_path) -> None:
     assert reject_quic_rules == []
 
 
-def test_tun_inbound_respects_sniff_setting(tmp_path) -> None:
-    """TUN inbound 應跟隨全域 sniff 設定。"""
+def test_route_respects_sniff_setting(tmp_path) -> None:
+    """全域配置應跟隨 sniff 設定，在 route 中加入/移除 sniff action。"""
     app_state = _build_app_state(tmp_path)
-    app_state.enable_tun = True
-    app_state.tun_chain_id = "chain1"
     app_state.enable_sniffing = False
 
     config = _generate_config(app_state)
-    tun_inbound = next(inbound for inbound in config["inbounds"] if inbound["tag"] == "IN_TUN")
+    assert not any(rule.get("action") == "sniff" for rule in config["route"]["rules"])
 
-    assert tun_inbound["sniff"] is False
-    assert "sniff_override_destination" not in tun_inbound
+    app_state.enable_sniffing = True
+    config = _generate_config(app_state)
+    assert any(rule.get("action") == "sniff" for rule in config["route"]["rules"])
 
 
 def test_tun_dns_uses_tcp_remote_server_and_direct_resolver(tmp_path) -> None:
@@ -98,15 +97,6 @@ def test_non_tun_dns_does_not_set_invalid_direct_detour(tmp_path) -> None:
 
     assert "detour" not in servers["remote_dns"]
 
-
-def test_tun_route_adds_sniff_action_when_enabled(tmp_path) -> None:
-    """TUN 模式在開啟 sniffing 時應加入 sing-box sniff action。"""
-    app_state = _build_app_state(tmp_path)
-    app_state.enable_tun = True
-    app_state.tun_chain_id = "chain1"
-
-    config = _generate_config(app_state)
-    assert any(rule.get("action") == "sniff" for rule in config["route"]["rules"])
 
 
 def test_outbounds_keep_connect_timeout_without_aggressive_tcp_flags(tmp_path) -> None:

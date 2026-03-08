@@ -85,6 +85,93 @@ class SingBoxAdapter(CoreAdapterBase):
             hop_nodes = app_state.get_nodes_for_chain(chain)
             if len(hop_nodes) == 0:
                 continue
+"""
+singbox_adapter.py — sing-box 核心的配置生成器
+
+這是最重要的 adapter，完整支援：
+  - 多端口（每個 PortMapping 一個 mixed inbound）
+  - 多跳鏈（用 detour 串接 hop outbound）
+  - 路由規則（每個 inbound tag 導到對應的 chain 最後一跳）
+
+sing-box 配置結構（簡化版）：
+{
+  "inbounds": [ { "type": "mixed", "tag": "IN_20001", "listen": "::", "listen_port": 20001 }, ... ],
+  "outbounds": [
+    // 每條 chain 的 hop outbound（用 detour 串起來）
+    { "tag": "CHAIN_c1_H1", ... },
+    { "tag": "CHAIN_c1_H2", ..., "detour": "CHAIN_c1_H1" },
+    { "tag": "CHAIN_c1_H3", ..., "detour": "CHAIN_c1_H2" },
+    // 必要的 direct 和 block outbound
+    { "type": "direct", "tag": "DIRECT" },
+    { "type": "block", "tag": "BLOCK" }
+  ],
+  "route": {
+    "rules": [
+      { "inbound": ["IN_20001"], "outbound": "CHAIN_c1_H3" },
+      ...
+    ],
+    "final": "DIRECT"
+  }
+}
+"""
+
+import copy
+import json
+import os
+from typing import Any
+
+from core.core_adapter_base import CoreAdapterBase
+from models.app_state import AppState
+from models.node import Node, NODE_TYPE_VMESS, NODE_TYPE_VLESS, NODE_TYPE_TROJAN
+from models.node import NODE_TYPE_SS, NODE_TYPE_WG, NODE_TYPE_SOCKS5, NODE_TYPE_HTTP
+from models.chain import Chain
+from models.port_mapping import PortMapping
+
+
+class SingBoxAdapter(CoreAdapterBase):
+    """sing-box 核心適配器"""
+
+    def adapter_name(self) -> str:
+        return "sing-box"
+
+    def config_file_extension(self) -> str:
+        return ".json"
+
+    def get_check_command(self, config_path: str, exe_path: str) -> list[str]:
+        return [exe_path, "check", "-c", config_path]
+
+    def get_start_command(self, config_path: str, exe_path: str) -> list[str]:
+        return [exe_path, "run", "-c", config_path]
+
+    def generate_config(self, app_state: AppState) -> tuple[str, str]:
+        """
+        產生 sing-box 的完整 JSON 配置。
+        回傳 (config_text, config_file_path)。
+        """
+        # ---------- 1. 建立 inbounds ----------
+        inbounds_list = _build_inbounds(app_state.port_mappings, app_state)
+
+        # ---------- 2. 建立 outbounds ----------
+        outbounds_list: list[dict] = []
+        # 收集所有會用到的 chain，以及每條 chain 的「最後一跳 tag」
+        chain_final_tag_map: dict[str, str] = {}
+
+        active_chain_ids = {pm.chain_id for pm in app_state.port_mappings}
+        if app_state.enable_tun and app_state.tun_chain_id:
+            active_chain_ids.add(app_state.tun_chain_id)
+
+        for cid in active_chain_ids:
+            chain = app_state.find_chain_by_id(cid)
+            if chain is None:
+                continue
+            # 如果這條 chain 已經處理過了，跳過
+            if chain.chain_id in chain_final_tag_map:
+                continue
+
+            # 取得 chain 的所有 hop 節點
+            hop_nodes = app_state.get_nodes_for_chain(chain)
+            if len(hop_nodes) == 0:
+                continue
 
             # 為這條 chain 產生 hop outbounds
             hop_outbounds, final_tag = _build_chain_outbounds(
@@ -121,13 +208,16 @@ class SingBoxAdapter(CoreAdapterBase):
             })
             if app_state.enable_sniffing:
                 route_rules.insert(0, {"protocol": ["dns"], "action": "hijack-dns"})
-                route_rules.insert(0, {"action": "sniff"})
             else:
                 route_rules.insert(0, {
                     "network": ["udp"],
                     "port": [53],
                     "action": "hijack-dns",
                 })
+
+        # 套用全域 Sniff 規則
+        if app_state.enable_sniffing:
+            route_rules.insert(0, {"action": "sniff"})
 
         dns_config = _build_dns_config(chain_final_tag_map, app_state)
 
@@ -194,10 +284,7 @@ def _build_inbounds(port_mappings: list[PortMapping], app_state: AppState) -> li
             "strict_route": True,
             # mixed stack 會優先走系統 TCP stack，通常比 gvisor 更省 CPU。
             "stack": "mixed",
-            "sniff": app_state.enable_sniffing,
         }
-        if app_state.enable_sniffing:
-            tun_inbound["sniff_override_destination"] = True
         inbounds.append(tun_inbound)
 
     for pm in port_mappings:
@@ -206,10 +293,7 @@ def _build_inbounds(port_mappings: list[PortMapping], app_state: AppState) -> li
             "tag": f"IN_{pm.listen_port}",
             "listen": pm.listen_host,
             "listen_port": pm.listen_port,
-            "sniff": app_state.enable_sniffing,
         }
-        if app_state.enable_sniffing:
-            inbound_dict["sniff_override_destination"] = True
             
         inbounds.append(inbound_dict)
     return inbounds

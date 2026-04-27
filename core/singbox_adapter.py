@@ -195,6 +195,10 @@ class SingBoxAdapter(CoreAdapterBase):
         # 防止 TUN 路由迴圈、攔截 DNS，並讓區網維持直連
         if app_state.enable_tun:
             route_rules.insert(0, {
+                "ip_cidr": ["127.0.0.0/8"],
+                "outbound": "DIRECT"
+            })
+            route_rules.insert(0, {
                 "process_name": [
                     "sing-box.exe", "xray.exe", "mihomo.exe",
                     "ChainPortGateway.exe", "ChainPortGateway",

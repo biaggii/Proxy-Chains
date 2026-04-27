@@ -98,6 +98,19 @@ class XrayAdapter(CoreAdapterBase):
         routing_rules = _build_xray_routing(
             app_state.port_mappings, chain_final_tag_map, app_state
         )
+        
+        # 預防 TUN 迴圈：排除核心程序與本地流量
+        routing_rules.insert(0, {
+            "type": "field",
+            "domain": ["regexp:^localhost$", "geosite:private"],
+            "outboundTag": "DIRECT"
+        })
+        routing_rules.insert(0, {
+            "type": "field",
+            "ip": ["127.0.0.0/8", "192.168.0.0/16", "10.0.0.0/8"],
+            "outboundTag": "DIRECT"
+        })
+
         if not app_state.enable_ipv6:
             # 阻擋所有 IPv6
             routing_rules.insert(0, {

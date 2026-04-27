@@ -16,8 +16,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, Qt, QRect, QPoint, QPropertyAnimation, Property
 from PySide6.QtGui import QPainter, QColor
 from models.app_state import AppState
+from app.ui_kit.feedback import set_feedback_banner
+
 
 class ToggleSwitch(QCheckBox):
+    """Animated toggle switch widget for the TUN panel."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(50, 26)
@@ -62,7 +66,6 @@ class ToggleSwitch(QCheckBox):
         p.end()
 
 
-
 class PortsPage(QWidget):
     """Manage local bindings and the optional TUN route."""
 
@@ -81,7 +84,7 @@ class PortsPage(QWidget):
 
         self.feedback_label = QLabel("No routing changes yet.")
         self.feedback_label.setWordWrap(True)
-        self._set_feedback("No routing changes yet.", "info")
+        set_feedback_banner(self.feedback_label, "No routing changes yet.", "info")
         layout.addWidget(self.feedback_label)
 
         tun_group = QGroupBox("System TUN Mode")
@@ -148,7 +151,11 @@ class PortsPage(QWidget):
         batch_form.addRow("Use Chain:", self.batch_chain_combo)
 
         self.batch_mode = QComboBox()
-        self.batch_mode.addItems(["Use Each Existing Chain in Order", "Create One 1-Hop Chain per Node", "Use One Chain for All Ports"])
+        self.batch_mode.addItems([
+            "Use Each Existing Chain in Order",
+            "Create One 1-Hop Chain per Node",
+            "Use One Chain for All Ports",
+        ])
         batch_form.addRow("Assignment Strategy:", self.batch_mode)
 
         btn_batch = QPushButton("Create Batch")
@@ -189,7 +196,7 @@ class PortsPage(QWidget):
 
         layout.addLayout(btn_row)
 
-    def refresh_table(self) -> None:
+    def refresh(self) -> None:
         """Refresh the table and selector state."""
         self._refresh_chain_combos()
         self._refresh_mapping_table()
@@ -255,7 +262,8 @@ class PortsPage(QWidget):
         self.app_state.tun_chain_id = chain_id if checked else ""
         self._refresh_tun_panel()
         self._refresh_mapping_table()
-        self._set_feedback(
+        set_feedback_banner(
+            self.feedback_label,
             "TUN mode enabled. System traffic will use the selected chain."
             if checked
             else "TUN mode disabled. Local port bindings remain available.",
@@ -270,7 +278,7 @@ class PortsPage(QWidget):
         if self.app_state.enable_tun and chain_id:
             self.app_state.tun_chain_id = chain_id
             self._refresh_mapping_table()
-            self._set_feedback("Updated the chain used by TUN mode.", "info")
+            set_feedback_banner(self.feedback_label, "Updated the chain used by TUN mode.", "info")
             self.data_changed.emit()
 
     def _refresh_tun_panel(self) -> None:
@@ -314,8 +322,8 @@ class PortsPage(QWidget):
         )
         self.app_state.port_mappings.append(pm)
         self.input_port.setValue(port + 1)
-        self.refresh_table()
-        self._set_feedback(f"Created mapping {host}:{port}.", "success")
+        self.refresh()
+        set_feedback_banner(self.feedback_label, f"Created mapping {host}:{port}.", "success")
         self.data_changed.emit()
 
     def _on_batch_create(self) -> None:
@@ -374,9 +382,13 @@ class PortsPage(QWidget):
                 created += 1
             feedback_message = f"Created {created} single-hop chain(s) and mapping(s)."
 
-        self.refresh_table()
+        self.refresh()
         if feedback_message:
-            self._set_feedback(feedback_message, "success" if created else "warning")
+            set_feedback_banner(
+                self.feedback_label,
+                feedback_message,
+                "success" if created else "warning",
+            )
         self.data_changed.emit()
 
     def _on_delete_selected(self) -> None:
@@ -389,8 +401,8 @@ class PortsPage(QWidget):
         for row in selected_rows:
             if row < len(self.app_state.port_mappings):
                 self.app_state.port_mappings.pop(row)
-        self.refresh_table()
-        self._set_feedback(f"Removed {len(selected_rows)} mapping(s).", "info")
+        self.refresh()
+        set_feedback_banner(self.feedback_label, f"Removed {len(selected_rows)} mapping(s).", "info")
         self.data_changed.emit()
 
     def _on_clear_all(self) -> None:
@@ -401,8 +413,8 @@ class PortsPage(QWidget):
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.app_state.port_mappings.clear()
-            self.refresh_table()
-            self._set_feedback("Cleared all port mappings.", "info")
+            self.refresh()
+            set_feedback_banner(self.feedback_label, "Cleared all port mappings.", "info")
             self.data_changed.emit()
 
     def _on_copy_proxy_list(self) -> None:
@@ -411,23 +423,10 @@ class PortsPage(QWidget):
         for pm in self.app_state.port_mappings:
             lines.append(f"socks5://{pm.listen_host}:{pm.listen_port}")
         if not lines:
-            self._set_feedback("No port mappings are available to copy.", "warning")
+            set_feedback_banner(self.feedback_label, "No port mappings are available to copy.", "warning")
             return
         text = "\n".join(lines)
         clipboard = QApplication.clipboard()
         if clipboard:
             clipboard.setText(text)
-        self._set_feedback(f"Copied {len(lines)} SOCKS5 endpoint(s) to the clipboard.", "success")
-
-    def _set_feedback(self, message: str, level: str) -> None:
-        colors = {
-            "success": ("#ecfdf3", "#166534"),
-            "warning": ("#fff7ed", "#9a3412"),
-            "error": ("#fef2f2", "#991b1b"),
-            "info": ("#eff6ff", "#1d4ed8"),
-        }
-        background, foreground = colors.get(level, colors["info"])
-        self.feedback_label.setText(message)
-        self.feedback_label.setStyleSheet(
-            f"padding: 8px 10px; border-radius: 8px; background: {background}; color: {foreground}; border: 1px solid {foreground};"
-        )
+        set_feedback_banner(self.feedback_label, f"Copied {len(lines)} SOCKS5 endpoint(s) to the clipboard.", "success")

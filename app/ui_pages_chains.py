@@ -1,25 +1,27 @@
 """
-ui_pages_chains.py — 鏈式代理管理頁面
+Chain management page.
 
-功能：
-  - 顯示所有 chain（清單）
-  - 新增/刪除 chain
-  - 編輯 chain 的 hops（從節點清單中選取，支援上移/下移）
-  - Wrap Socks5：選一條 pre-chain + 一個 socks5 節點 = 新 chain
+Responsibilities:
+  - Display all chains in a list
+  - Create and delete chains
+  - Edit chain hops (add, remove, reorder nodes)
+  - Add a SOCKS5 exit to an existing chain (advanced, collapsible)
+  - Batch rename selected chains
 """
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QListWidget, QListWidgetItem, QLabel, QMessageBox,
+    QListWidget, QLabel, QMessageBox,
     QLineEdit, QGroupBox, QFormLayout, QComboBox,
-    QSplitter, QInputDialog
+    QSplitter, QInputDialog,
 )
 from PySide6.QtCore import Signal, Qt
 from models.app_state import AppState
+from utils.pattern_rename import expand_pattern
 
 
 class ChainsPage(QWidget):
-    """鏈式代理管理頁面"""
+    """Build and edit proxy chains."""
 
     data_changed = Signal()
 
@@ -31,36 +33,16 @@ class ChainsPage(QWidget):
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
         self.summary_label = QLabel(
-            "A chain is the ordered route your traffic follows. The top hop is the entry, and the last hop is the exit."
+            "A chain is the ordered route your traffic follows. "
+            "The top hop is the entry, and the last hop is the exit."
         )
         self.summary_label.setWordWrap(True)
         layout.addWidget(self.summary_label)
 
-        # ---------- 上半：Wrap Socks5 ----------
-        top_row = QHBoxLayout()
-
-        # Wrap Socks5
-        wrap_group = QGroupBox("Add SOCKS5 Exit")
-        wrap_form = QFormLayout()
-        self.combo_pre_chain = QComboBox()
-        wrap_form.addRow("Base Chain:", self.combo_pre_chain)
-        self.combo_landing_socks5 = QComboBox()
-        wrap_form.addRow("Exit SOCKS5 Node:", self.combo_landing_socks5)
-        self.input_wrap_name = QLineEdit()
-        self.input_wrap_name.setPlaceholderText("New Route Name")
-        wrap_form.addRow("New Chain Name:", self.input_wrap_name)
-        btn_wrap = QPushButton("Create Exit Chain")
-        btn_wrap.clicked.connect(self._on_wrap_socks5)
-        wrap_form.addRow(btn_wrap)
-        wrap_group.setLayout(wrap_form)
-        top_row.addWidget(wrap_group)
-
-        layout.addLayout(top_row)
-
-        # ---------- 下半：chain 清單 + hop 編輯 ----------
+        # ── Chain list + hop editor ────────────────────
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # 左邊：chain 清單
+        # Left: chain list
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.addWidget(QLabel("Chains"))
@@ -73,7 +55,7 @@ class ChainsPage(QWidget):
         btn_add_empty_chain.clicked.connect(self._on_add_empty_chain)
         left_layout.addWidget(btn_add_empty_chain)
 
-        # 批量改名
+        # Batch rename
         rename_row = QHBoxLayout()
         self.input_rename_pattern = QLineEdit()
         self.input_rename_pattern.setPlaceholderText("e.g. US{1-8} or HK{1-5}")
@@ -88,7 +70,7 @@ class ChainsPage(QWidget):
         left_layout.addWidget(btn_del_chain)
         splitter.addWidget(left_widget)
 
-        # 右邊：hop 編輯
+        # Right: hop editor
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.addWidget(QLabel("Hops (Top to Bottom = Entry to Exit)"))
@@ -96,7 +78,6 @@ class ChainsPage(QWidget):
         self.hop_list = QListWidget()
         right_layout.addWidget(self.hop_list)
 
-        # hop 操作按鈕
         hop_btns = QHBoxLayout()
         self.combo_add_node = QComboBox()
         hop_btns.addWidget(self.combo_add_node)
@@ -121,21 +102,36 @@ class ChainsPage(QWidget):
         splitter.setSizes([300, 500])
         layout.addWidget(splitter)
 
-    # ============================================================
-    # 刷新
-    # ============================================================
+        # ── Advanced: Add SOCKS5 exit (collapsed by default) ──
+        wrap_group = QGroupBox("Advanced: Add SOCKS5 Exit")
+        wrap_group.setCheckable(True)
+        wrap_group.setChecked(False)
+        wrap_form = QFormLayout()
+        self.combo_pre_chain = QComboBox()
+        wrap_form.addRow("Base Chain:", self.combo_pre_chain)
+        self.combo_landing_socks5 = QComboBox()
+        wrap_form.addRow("Exit SOCKS5 Node:", self.combo_landing_socks5)
+        self.input_wrap_name = QLineEdit()
+        self.input_wrap_name.setPlaceholderText("New Route Name")
+        wrap_form.addRow("New Chain Name:", self.input_wrap_name)
+        btn_wrap = QPushButton("Create Exit Chain")
+        btn_wrap.clicked.connect(self._on_wrap_socks5)
+        wrap_form.addRow(btn_wrap)
+        wrap_group.setLayout(wrap_form)
+        layout.addWidget(wrap_group)
 
-    def refresh_table(self) -> None:
-        """刷新所有清單"""
+    # ── Refresh ───────────────────────────────────────
+
+    def refresh(self) -> None:
+        """Reload all lists and combos."""
         self._refresh_chain_list()
         self._refresh_combos()
         self.summary_label.setText(
             f"{len(self.app_state.chains)} chain(s) available. "
-            "Use the top section to add a SOCKS5 exit, or build hops manually below."
+            "Build hops in the right panel, or use the advanced section to add a SOCKS5 exit."
         )
 
     def _refresh_chain_list(self) -> None:
-        """刷新 chain 清單"""
         current_row = self.chain_list.currentRow()
         self.chain_list.clear()
         for chain in self.app_state.chains:
@@ -143,12 +139,11 @@ class ChainsPage(QWidget):
             self.chain_list.addItem(
                 f"[{chain.chain_id}] {chain.name}  ({hop_count} hops)"
             )
-        if current_row >= 0 and current_row < self.chain_list.count():
+        if 0 <= current_row < self.chain_list.count():
             self.chain_list.setCurrentRow(current_row)
 
     def _refresh_combos(self) -> None:
-        """刷新下拉選單"""
-        # 節點下拉（用於加入 hop）
+        # Node combo (for adding hops)
         self.combo_add_node.clear()
         for node in self.app_state.nodes:
             self.combo_add_node.addItem(
@@ -156,7 +151,7 @@ class ChainsPage(QWidget):
                 userData=node.node_id,
             )
 
-        # Pre-chain 下拉
+        # Pre-chain combo
         self.combo_pre_chain.clear()
         for chain in self.app_state.chains:
             self.combo_pre_chain.addItem(
@@ -164,7 +159,7 @@ class ChainsPage(QWidget):
                 userData=chain.chain_id,
             )
 
-        # 落地 socks5 下拉（只顯示 socks5 類型的節點）
+        # SOCKS5 node combo (only socks5 nodes)
         self.combo_landing_socks5.clear()
         for node in self.app_state.nodes:
             if node.node_type == "socks5":
@@ -173,9 +168,7 @@ class ChainsPage(QWidget):
                     userData=node.node_id,
                 )
 
-    # ============================================================
-    # Chain 操作
-    # ============================================================
+    # ── Chain operations ──────────────────────────────
 
     def _on_add_empty_chain(self) -> None:
         name, ok = QInputDialog.getText(self, "Add", "Enter new Chain Name:")
@@ -183,7 +176,7 @@ class ChainsPage(QWidget):
             from models.chain import Chain
             new_chain = Chain(name=name.strip())
             self.app_state.chains.append(new_chain)
-            self.refresh_table()
+            self.refresh()
             self.data_changed.emit()
 
     def _on_delete_chain(self) -> None:
@@ -197,13 +190,12 @@ class ChainsPage(QWidget):
         for row in selected_rows:
             if 0 <= row < len(self.app_state.chains):
                 self.app_state.chains.pop(row)
-        self.refresh_table()
+        self.refresh()
         self.hop_list.clear()
         self.data_changed.emit()
 
     def _on_batch_rename(self) -> None:
-        """批量改名，支援格式：us{1-8} 或 HK{3-10}"""
-        import re
+        """Batch rename using a pattern like US{1-8}."""
         pattern_text = self.input_rename_pattern.text().strip()
         if not pattern_text:
             QMessageBox.warning(self, "Notice", "Please enter rename pattern, e.g.: US{1-8}")
@@ -216,39 +208,28 @@ class ChainsPage(QWidget):
             QMessageBox.warning(self, "Notice", "Please select Chain(s) to rename")
             return
 
-        # 解析模板：找 {start-end} 或 {start}
-        match = re.search(r'\{(\d+)(?:-(\d+))?\}', pattern_text)
-        if match:
-            start_num = int(match.group(1))
-            prefix = pattern_text[:match.start()]
-            suffix = pattern_text[match.end():]
-            # 為每個選中的 chain 依序編號
-            for i, row in enumerate(selected_rows):
-                if 0 <= row < len(self.app_state.chains):
-                    num = start_num + i
-                    self.app_state.chains[row].name = f"{prefix}{num}{suffix}"
-        else:
-            # 沒有 {n} 模板，就都改成一樣的名字
-            for row in selected_rows:
-                if 0 <= row < len(self.app_state.chains):
-                    self.app_state.chains[row].name = pattern_text
+        for i, row in enumerate(selected_rows):
+            if 0 <= row < len(self.app_state.chains):
+                self.app_state.chains[row].name = expand_pattern(
+                    pattern_text, i, len(selected_rows)
+                )
 
         self.input_rename_pattern.clear()
-        self.refresh_table()
+        self.refresh()
         self.data_changed.emit()
         QMessageBox.information(self, "Success", f"Renamed {len(selected_rows)} Chains")
 
     def _on_wrap_socks5(self) -> None:
-        """Wrap Socks5：pre-chain + socks5 落地 = 新 chain"""
+        """Create a new chain = base chain hops + SOCKS5 exit."""
         pre_chain_id = self.combo_pre_chain.currentData()
         landing_node_id = self.combo_landing_socks5.currentData()
         new_name = self.input_wrap_name.text().strip()
 
         if not pre_chain_id:
-            QMessageBox.warning(self, "Notice", "Please select a Pre-chain")
+            QMessageBox.warning(self, "Notice", "Please select a Base Chain")
             return
         if not landing_node_id:
-            QMessageBox.warning(self, "Notice", "Please select a Landing Socks5 Node")
+            QMessageBox.warning(self, "Notice", "Please select an Exit SOCKS5 Node")
             return
         if not new_name:
             QMessageBox.warning(self, "Notice", "Please enter new Chain Name")
@@ -256,36 +237,33 @@ class ChainsPage(QWidget):
 
         pre_chain = self.app_state.find_chain_by_id(pre_chain_id)
         if pre_chain is None:
-            QMessageBox.warning(self, "Error", "Pre-chain not found")
+            QMessageBox.warning(self, "Error", "Base chain not found")
             return
 
-        # 建立新 chain = pre-chain 的 hops + 落地 socks5
         from models.chain import Chain
         new_hops = list(pre_chain.hop_node_ids) + [landing_node_id]
         new_chain = Chain(name=new_name, hop_node_ids=new_hops)
         self.app_state.chains.append(new_chain)
 
         self.input_wrap_name.clear()
-        self.refresh_table()
+        self.refresh()
         self.data_changed.emit()
         QMessageBox.information(
             self, "Success",
-            f"Created Wrap Chain: {new_name} ({len(new_hops)} hops)"
+            f"Created Exit Chain: {new_name} ({len(new_hops)} hops)"
         )
 
-    # ============================================================
-    # Hop 操作
-    # ============================================================
+    # ── Hop operations ────────────────────────────────
 
     def _get_selected_chain(self):
-        """取得目前選中的 chain"""
+        """Return the currently selected chain, or None."""
         row = self.chain_list.currentRow()
         if row < 0 or row >= len(self.app_state.chains):
             return None
         return self.app_state.chains[row]
 
     def _on_chain_selected(self, row: int) -> None:
-        """當選中一條 chain，顯示它的 hops"""
+        """Display hops for the selected chain."""
         self.hop_list.clear()
         chain = self._get_selected_chain()
         if chain is None:

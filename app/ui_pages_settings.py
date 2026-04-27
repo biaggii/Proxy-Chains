@@ -5,6 +5,9 @@ Responsibilities:
   - Choose the active core engine
   - Configure executable and config output paths
   - Adjust startup, advanced network, and profile import/export options
+
+NOTE: The "Quick Start" guide lives exclusively on the Dashboard.
+      It is NOT duplicated here.
 """
 
 from PySide6.QtWidgets import (
@@ -18,6 +21,7 @@ import os
 from PySide6.QtCore import Signal
 from models.app_state import AppState
 from utils.autorun import set_autorun
+from app.ui_kit.feedback import set_feedback_banner
 
 
 class SettingsPage(QWidget):
@@ -35,7 +39,8 @@ class SettingsPage(QWidget):
 
         self.feedback_label = QLabel("Review the Home tab for readiness hints after saving settings.")
         self.feedback_label.setWordWrap(True)
-        self._set_feedback(
+        set_feedback_banner(
+            self.feedback_label,
             "Review the Home tab for readiness hints after saving settings.",
             "info",
         )
@@ -158,26 +163,14 @@ class SettingsPage(QWidget):
         data_group.setLayout(data_layout)
         layout.addWidget(data_group)
 
-        info_group = QGroupBox("Quick Start")
-        info_layout = QVBoxLayout()
-        info_text = QLabel(
-            "1. Start at Home to review the readiness checklist.\n"
-            "2. Add subscription sources or paste node URIs.\n"
-            "3. Build chains and port bindings in Routing.\n"
-            "4. Apply the configuration.\n"
-            "5. Start the core and watch the Logs tab for runtime details."
-        )
-        info_text.setWordWrap(True)
-        info_layout.addWidget(info_text)
-        info_group.setLayout(info_layout)
-        layout.addWidget(info_group)
+        # Quick Start guide removed — it lives exclusively on Dashboard.
 
         layout.addStretch()
         
         scroll_area.setWidget(scroll_widget)
         main_layout.addWidget(scroll_area)
 
-    def refresh_table(self) -> None:
+    def refresh(self) -> None:
         """Load settings from ``app_state`` into the form."""
         self.combo_core_type.setCurrentText(self.app_state.core_type)
         self.combo_log_level.setCurrentText(self.app_state.log_level)
@@ -264,7 +257,11 @@ class SettingsPage(QWidget):
         set_autorun(self.app_state.run_on_startup)
         
         self.data_changed.emit()
-        self._set_feedback("Settings saved. Re-apply or restart the core if runtime behavior changed.", "success")
+        set_feedback_banner(
+            self.feedback_label,
+            "Settings saved. Re-apply or restart the core if runtime behavior changed.",
+            "success",
+        )
 
     def _on_export_data(self) -> None:
         """Export the current profile to a JSON file."""
@@ -280,7 +277,7 @@ class SettingsPage(QWidget):
         try:
             self.app_state.state_file_path = file_path
             self.app_state.save_to_file()
-            self._set_feedback(f"Profile exported to {file_path}.", "success")
+            set_feedback_banner(self.feedback_label, f"Profile exported to {file_path}.", "success")
         except Exception as e:
             QMessageBox.warning(self, "Failed", f"Failed to export: {e}")
         finally:
@@ -305,21 +302,8 @@ class SettingsPage(QWidget):
                 self.app_state.state_file_path = original_path
                 self.app_state.save_to_file()
                 self.data_changed.emit()
-                self.refresh_table()
-                self._set_feedback(f"Profile imported from {file_path}.", "success")
+                self.refresh()
+                set_feedback_banner(self.feedback_label, f"Profile imported from {file_path}.", "success")
             except Exception as e:
                 QMessageBox.warning(self, "Failed", f"Failed to import: {e}")
                 self.app_state.state_file_path = original_path
-
-    def _set_feedback(self, message: str, level: str) -> None:
-        colors = {
-            "success": ("#ecfdf3", "#166534"),
-            "warning": ("#fff7ed", "#9a3412"),
-            "error": ("#fef2f2", "#991b1b"),
-            "info": ("#eff6ff", "#1d4ed8"),
-        }
-        background, foreground = colors.get(level, colors["info"])
-        self.feedback_label.setText(message)
-        self.feedback_label.setStyleSheet(
-            f"padding: 8px 10px; border-radius: 8px; background: {background}; color: {foreground}; border: 1px solid {foreground};"
-        )

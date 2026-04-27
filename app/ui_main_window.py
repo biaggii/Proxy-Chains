@@ -16,6 +16,7 @@ import os
 
 from models.app_state import AppState
 from core.process_runner import ProcessRunner
+from app.ui_kit.feedback import set_feedback_banner
 
 from app.ui_pages_subscriptions import SubscriptionsPage
 from app.ui_pages_nodes import NodesPage
@@ -52,65 +53,14 @@ class MainWindow(QMainWindow):
         self._launch_actions_scheduled = False
 
     def _init_ui(self) -> None:
-        """Create the main window widgets."""
+        """Create the main window widgets.
+
+        All QSS is handled by the centralised theme — no inline
+        ``setStyleSheet()`` here.
+        """
         self.setWindowTitle("ChainPort Gateway - Proxy Multi-Chain Manager")
         self.setMinimumSize(1120, 820)
         self.resize(1200, 860)
-        self.setStyleSheet(
-            """
-            QMainWindow {
-              background: #f3f5f9;
-            }
-            QTabWidget::pane {
-              border: 0;
-              background: transparent;
-            }
-            QTabBar::tab {
-              background: #dde4ef;
-              padding: 10px 16px;
-              border-radius: 10px;
-              margin-right: 6px;
-            }
-            QTabBar::tab:selected {
-              background: #1f4b99;
-              color: white;
-            }
-            QLabel#bannerLabel {
-              border-radius: 10px;
-              padding: 10px 14px;
-              font-weight: 600;
-            }
-            QFrame#dashboardHero, QFrame#dashboardPanel, QFrame#dashboardStatCard, QFrame#dashboardMetricCard {
-              background: white;
-              border: 1px solid #d8dfeb;
-              border-radius: 14px;
-            }
-            QLabel#dashboardHeroTitle {
-              font-size: 24px;
-              font-weight: 700;
-              color: #16386c;
-            }
-            QLabel#dashboardHeroSubtitle {
-              color: #4d617f;
-            }
-            QLabel#dashboardPanelTitle, QLabel#dashboardStatTitle {
-              font-size: 12px;
-              font-weight: 700;
-              color: #64748b;
-              text-transform: uppercase;
-            }
-            QLabel#dashboardStatValue {
-              font-size: 24px;
-              font-weight: 700;
-              color: #102646;
-            }
-            QLabel#dashboardPreflightTitle {
-              font-size: 18px;
-              font-weight: 700;
-              color: #102646;
-            }
-            """
-        )
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -208,10 +158,6 @@ class MainWindow(QMainWindow):
         self.page_ports.data_changed.connect(self._on_data_changed)
         self.page_settings.data_changed.connect(self._on_data_changed)
         self.page_dashboard.navigate_requested.connect(self._open_tab)
-        self.page_dashboard.apply_requested.connect(self._on_apply)
-        self.page_dashboard.start_requested.connect(self._on_start)
-        self.page_dashboard.stop_requested.connect(self._on_stop)
-        self.page_dashboard.open_logs_requested.connect(lambda: self._open_tab("logs"))
 
         self.log_bridge.log_signal.connect(self.page_logs.append_log)
         self.log_bridge.stopped_signal.connect(self._on_core_exited)
@@ -223,14 +169,14 @@ class MainWindow(QMainWindow):
 
     def _refresh_all_pages(self) -> None:
         """Refresh every page from the latest state."""
-        self.page_dashboard.refresh_table()
-        self.page_subs.refresh_table()
-        self.page_nodes.refresh_table()
-        self.page_chains.refresh_table()
-        self.page_ports.refresh_table()
-        self.page_routing.refresh_table()
-        self.page_logs.refresh_table()
-        self.page_settings.refresh_table()
+        self.page_dashboard.refresh()
+        self.page_subs.refresh()
+        self.page_nodes.refresh()
+        self.page_chains.refresh()
+        self.page_ports.refresh()
+        self.page_routing.refresh()
+        self.page_logs.refresh()
+        self.page_settings.refresh()
         self._refresh_action_state()
 
     def _init_tray_icon(self) -> None:
@@ -263,18 +209,15 @@ class MainWindow(QMainWindow):
         import sys
         
         try:
-            # Stop core process and save state explicitly before restart
             self._on_stop()
             self.app_state.save_to_file()
             
-            # Request UAC elevation for current script/exe
             if getattr(sys, 'frozen', False):
                 ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, "", None, 1)
             else:
                 import os
                 main_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "main.py"))
                 
-                # Use pythonw.exe to prevent a blank terminal window from showing
                 exe_path = sys.executable
                 if exe_path.lower().endswith("python.exe"):
                     pythonw_path = exe_path[:-10] + "pythonw.exe"
@@ -283,7 +226,6 @@ class MainWindow(QMainWindow):
                         
                 ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, f'"{main_script}"', None, 1)
                 
-            # Safely exit this non-admin instance
             self._force_quit()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to restart as administrator:\n{e}")
@@ -349,8 +291,8 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index: int) -> None:
         """Refresh the active page when the current tab changes."""
         page = self.tabs.widget(index)
-        if hasattr(page, "refresh_table"):
-            page.refresh_table()
+        if hasattr(page, "refresh"):
+            page.refresh()
         self._refresh_action_state()
 
     @Slot()
@@ -499,20 +441,10 @@ class MainWindow(QMainWindow):
                 self._notify_launch_issue("Auto-start skipped: unknown core type.", "error")
             return False
 
-        from core.singbox_adapter import SingBoxAdapter
-        from core.xray_adapter import XrayAdapter
-        from core.mihomo_adapter import MihomoAdapter
-
-        all_adapters = [SingBoxAdapter(), XrayAdapter(), MihomoAdapter()]
-        for adp in all_adapters:
-            try:
-                path = adp.generate_config(self.app_state)[1]
-                self.page_logs.append_log(f"[Auto Gen] ✅ {adp.adapter_name()} config generated: {path}")
-            except Exception as err:
-                self.page_logs.append_log(f"[Auto Gen] ❌ {adp.adapter_name()} generation failed: {err}")
-
+        # Only generate config for the selected adapter (P2 fix: no more wasteful triple-gen).
         try:
             _, config_path = adapter.generate_config(self.app_state)
+            self.page_logs.append_log(f"[Start] ✅ Config generated: {config_path}")
         except Exception as err:
             if interactive:
                 QMessageBox.critical(self, "Error", f"Config generation failed: {err}")
@@ -588,17 +520,8 @@ class MainWindow(QMainWindow):
         self._refresh_action_state()
 
     def _show_banner(self, message: str, level: str = "info") -> None:
-        colors = {
-            "success": ("#ecfdf3", "#166534"),
-            "warning": ("#fff7ed", "#9a3412"),
-            "error": ("#fef2f2", "#991b1b"),
-            "info": ("#eff6ff", "#1d4ed8"),
-        }
-        background, foreground = colors.get(level, colors["info"])
-        self.banner.setText(message)
-        self.banner.setStyleSheet(
-            f"QLabel#bannerLabel {{ background: {background}; color: {foreground}; border: 1px solid {foreground}; }}"
-        )
+        """Show a feedback banner at the top of the window."""
+        set_feedback_banner(self.banner, message, level)
         self.banner.show()
 
     def _open_tab(self, key: str) -> None:

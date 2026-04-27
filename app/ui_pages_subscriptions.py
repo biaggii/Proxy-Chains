@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from models.app_state import AppState
+from app.ui_kit.feedback import set_feedback_banner
 
 
 class SubscriptionsPage(QWidget):
@@ -36,7 +37,7 @@ class SubscriptionsPage(QWidget):
 
         self.feedback_label = QLabel("No source activity yet.")
         self.feedback_label.setWordWrap(True)
-        self._set_feedback("No source activity yet.", "info")
+        set_feedback_banner(self.feedback_label, "No source activity yet.", "info")
         layout.addWidget(self.feedback_label)
 
         add_group = QGroupBox("Import Source")
@@ -91,7 +92,7 @@ class SubscriptionsPage(QWidget):
 
         layout.addLayout(btn_row)
 
-    def refresh_table(self) -> None:
+    def refresh(self) -> None:
         """Reload table data from the current application state."""
         self.table.setRowCount(len(self.app_state.subscriptions))
         for row, sub in enumerate(self.app_state.subscriptions):
@@ -130,8 +131,8 @@ class SubscriptionsPage(QWidget):
         self.input_name.clear()
         self.input_url.clear()
 
-        self.refresh_table()
-        self._set_feedback(f"Saved source '{new_sub.name}'.", "success")
+        self.refresh()
+        set_feedback_banner(self.feedback_label, f"Saved source '{new_sub.name}'.", "success")
         self.data_changed.emit()
 
     def _on_delete_selected(self) -> None:
@@ -148,8 +149,12 @@ class SubscriptionsPage(QWidget):
                 self.app_state.remove_subscription_and_nodes(sub.sub_id)
                 deleted_count += 1
 
-        self.refresh_table()
-        self._set_feedback(f"Removed {deleted_count} source(s) and their imported nodes.", "info")
+        self.refresh()
+        set_feedback_banner(
+            self.feedback_label,
+            f"Removed {deleted_count} source(s) and their imported nodes.",
+            "info",
+        )
         self.data_changed.emit()
 
     def _on_update_selected(self) -> None:
@@ -200,19 +205,10 @@ class SubscriptionsPage(QWidget):
             if len(all_errors) > 5:
                 message += f"\n...and {len(all_errors) - 5} more"
 
-        self.refresh_table()
-        self._set_feedback(message, "warning" if all_errors else "success")
-        self.data_changed.emit()
-
-    def _set_feedback(self, message: str, level: str) -> None:
-        colors = {
-            "success": ("#ecfdf3", "#166534"),
-            "warning": ("#fff7ed", "#9a3412"),
-            "error": ("#fef2f2", "#991b1b"),
-            "info": ("#eff6ff", "#1d4ed8"),
-        }
-        background, foreground = colors.get(level, colors["info"])
-        self.feedback_label.setText(message)
-        self.feedback_label.setStyleSheet(
-            f"padding: 8px 10px; border-radius: 8px; background: {background}; color: {foreground}; border: 1px solid {foreground};"
+        self.refresh()
+        set_feedback_banner(
+            self.feedback_label,
+            message,
+            "warning" if all_errors else "success",
         )
+        self.data_changed.emit()

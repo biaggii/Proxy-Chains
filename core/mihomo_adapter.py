@@ -115,11 +115,27 @@ class MihomoAdapter(CoreAdapterBase):
                 "auto-detect-interface": True,
                 "dns-hijack": ["any:53", "tcp://any:53"]
             }
+            # Prevent routing loops by excluding core processes
+            full_config["tun"]["process-name-filter"] = [
+                "sing-box.exe", "xray.exe", "mihomo.exe",
+                "ChainPortGateway.exe", "ChainPortGateway",
+                "python.exe", "pythonw.exe"
+            ]
+            
             final_name = chain_final_name_map.get(app_state.tun_chain_id)
             if final_name:
-                match_rule = f"MATCH,{final_name}"
-                
-        full_config["rules"] = [match_rule]
+                # Add DNS hijacking and local routing safety
+                full_config["rules"] = [
+                    f"PROCESS-NAME,mihomo.exe,DIRECT",
+                    f"PROCESS-NAME,sing-box.exe,DIRECT",
+                    f"PROCESS-NAME,xray.exe,DIRECT",
+                    "IP-CIDR,192.168.0.0/16,DIRECT",
+                    "IP-CIDR,10.0.0.0/8,DIRECT",
+                    "IP-CIDR,127.0.0.0/8,DIRECT",
+                    f"MATCH,{final_name}"
+                ]
+        else:
+            full_config["rules"] = ["MATCH,DIRECT"]
 
         # ---------- 4. 寫檔 ----------
         config_text = yaml.dump(

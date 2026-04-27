@@ -1,4 +1,12 @@
-from PySide6.QtCore import Qt, Signal
+"""
+Dashboard / Home page.
+
+Shows at-a-glance metrics, a guided quick-start checklist, and the
+readiness preflight panel.  All action buttons (Apply / Start / Stop)
+live in the global action bar — they are NOT duplicated here.
+"""
+
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -8,12 +16,15 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QVBoxLayout,
     QWidget,
+    QGraphicsOpacityEffect,
 )
 
 from models.app_state import AppState
 
 
 class _MetricCard(QFrame):
+    """Small stat tile for the dashboard grid."""
+
     def __init__(self, title: str, accent: str, parent=None):
         super().__init__(parent)
         self.setObjectName("dashboardStatCard")
@@ -32,7 +43,9 @@ class _MetricCard(QFrame):
 
         self.title_label = QLabel(title)
         self.title_label.setObjectName("dashboardStatTitle")
-        self.title_label.setStyleSheet("font-size: 12px; letter-spacing: 0.5px; color: #5f6b70;")
+        self.title_label.setStyleSheet(
+            "font-size: 12px; letter-spacing: 0.5px; color: #5f6b70;"
+        )
         layout.addWidget(self.title_label)
 
         self.detail_label = QLabel("")
@@ -44,13 +57,16 @@ class _MetricCard(QFrame):
         self.value_label.setText(value)
         self.detail_label.setText(detail)
 
+    def set_accent(self, color: str) -> None:
+        self.value_label.setStyleSheet(
+            f"font-size: 28px; font-weight: 700; color: {color};"
+        )
+
 
 class DashboardPage(QWidget):
+    """Home page with metrics, quick start, and preflight readiness."""
+
     navigate_requested = Signal(str)
-    apply_requested = Signal()
-    start_requested = Signal()
-    stop_requested = Signal()
-    open_logs_requested = Signal()
 
     def __init__(self, app_state: AppState, parent=None):
         super().__init__(parent)
@@ -59,6 +75,19 @@ class DashboardPage(QWidget):
         self._can_apply = False
         self._can_start = False
         self._build_ui()
+        self._init_animations()
+
+    def _init_animations(self) -> None:
+        self.opacity_effect = QGraphicsOpacityEffect(self.runtime_card)
+        self.runtime_card.setGraphicsEffect(self.opacity_effect)
+
+        self.heartbeat = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.heartbeat.setDuration(1500)
+        self.heartbeat.setStartValue(1.0)
+        self.heartbeat.setKeyValueAt(0.5, 0.4)
+        self.heartbeat.setEndValue(1.0)
+        self.heartbeat.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self.heartbeat.setLoopCount(-1)
 
     def _build_ui(self) -> None:
         root_layout = QVBoxLayout(self)
@@ -76,6 +105,7 @@ class DashboardPage(QWidget):
         layout.setContentsMargins(20, 20, 20, 24)
         layout.setSpacing(18)
 
+        # ── Hero banner ─────────────────────────────────
         hero = QFrame()
         hero.setObjectName("dashboardHero")
         hero_layout = QVBoxLayout(hero)
@@ -83,7 +113,9 @@ class DashboardPage(QWidget):
         hero_layout.setSpacing(10)
 
         eyebrow = QLabel("OVERVIEW")
-        eyebrow.setStyleSheet("font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #c46a2e;")
+        eyebrow.setStyleSheet(
+            "font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #c46a2e;"
+        )
         hero_layout.addWidget(eyebrow)
 
         title = QLabel("Control Deck")
@@ -92,44 +124,35 @@ class DashboardPage(QWidget):
         hero_layout.addWidget(title)
 
         subtitle = QLabel(
-            "Build routes, publish local proxy ports, and start the selected core from a single guided workspace."
+            "Build routes, publish local proxy ports, and start the selected core "
+            "from the global action bar below."
         )
         subtitle.setObjectName("dashboardHeroSubtitle")
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("font-size: 14px; color: #41505a;")
         hero_layout.addWidget(subtitle)
 
-        quick_actions = QHBoxLayout()
-        quick_actions.setSpacing(10)
+        # Navigation shortcuts only — no duplicate Apply/Start/Stop.
+        nav_row = QHBoxLayout()
+        nav_row.setSpacing(10)
 
         self.btn_open_sources = QPushButton("Open Sources")
-        self.btn_open_sources.clicked.connect(lambda: self.navigate_requested.emit("subscriptions"))
-        quick_actions.addWidget(self.btn_open_sources)
+        self.btn_open_sources.clicked.connect(
+            lambda: self.navigate_requested.emit("subscriptions")
+        )
+        nav_row.addWidget(self.btn_open_sources)
 
         self.btn_open_routing = QPushButton("Open Routing")
-        self.btn_open_routing.clicked.connect(lambda: self.navigate_requested.emit("routing"))
-        quick_actions.addWidget(self.btn_open_routing)
+        self.btn_open_routing.clicked.connect(
+            lambda: self.navigate_requested.emit("routing")
+        )
+        nav_row.addWidget(self.btn_open_routing)
 
-        self.btn_apply = QPushButton("Apply Configuration")
-        self.btn_apply.clicked.connect(lambda _checked=False: self.apply_requested.emit())
-        quick_actions.addWidget(self.btn_apply)
-
-        self.btn_start = QPushButton("Start Service")
-        self.btn_start.clicked.connect(lambda _checked=False: self.start_requested.emit())
-        quick_actions.addWidget(self.btn_start)
-
-        self.btn_stop = QPushButton("Stop Service")
-        self.btn_stop.clicked.connect(lambda _checked=False: self.stop_requested.emit())
-        quick_actions.addWidget(self.btn_stop)
-
-        self.btn_logs = QPushButton("Open Activity")
-        self.btn_logs.clicked.connect(lambda _checked=False: self.open_logs_requested.emit())
-        quick_actions.addWidget(self.btn_logs)
-
-        quick_actions.addStretch()
-        hero_layout.addLayout(quick_actions)
+        nav_row.addStretch()
+        hero_layout.addLayout(nav_row)
         layout.addWidget(hero)
 
+        # ── Metric grid ─────────────────────────────────
         metrics_grid = QGridLayout()
         metrics_grid.setHorizontalSpacing(14)
         metrics_grid.setVerticalSpacing(14)
@@ -151,9 +174,11 @@ class DashboardPage(QWidget):
 
         layout.addLayout(metrics_grid)
 
+        # ── Lower panels ────────────────────────────────
         lower_row = QHBoxLayout()
         lower_row.setSpacing(14)
 
+        # Quick Start checklist (single source — not duplicated in Settings)
         self.progress_card = QFrame()
         self.progress_card.setObjectName("dashboardPanel")
         progress_layout = QVBoxLayout(self.progress_card)
@@ -161,7 +186,9 @@ class DashboardPage(QWidget):
         progress_layout.setSpacing(12)
         progress_title = QLabel("Quick Start")
         progress_title.setObjectName("dashboardPanelTitle")
-        progress_title.setStyleSheet("font-size: 18px; font-weight: 700; color: #1f2b33;")
+        progress_title.setStyleSheet(
+            "font-size: 18px; font-weight: 700; color: #1f2b33;"
+        )
         progress_layout.addWidget(progress_title)
 
         self.step_sources = QLabel("")
@@ -183,6 +210,7 @@ class DashboardPage(QWidget):
 
         lower_row.addWidget(self.progress_card, 3)
 
+        # Readiness / Preflight panel
         self.preflight_card = QFrame()
         self.preflight_card.setObjectName("dashboardPanel")
         preflight_layout = QVBoxLayout(self.preflight_card)
@@ -191,7 +219,9 @@ class DashboardPage(QWidget):
 
         preflight_title = QLabel("Readiness")
         preflight_title.setObjectName("dashboardPreflightTitle")
-        preflight_title.setStyleSheet("font-size: 18px; font-weight: 700; color: #1f2b33;")
+        preflight_title.setStyleSheet(
+            "font-size: 18px; font-weight: 700; color: #1f2b33;"
+        )
         preflight_layout.addWidget(preflight_title)
 
         self.preflight_summary = QLabel("Waiting for workspace analysis.")
@@ -205,16 +235,26 @@ class DashboardPage(QWidget):
         preflight_layout.addWidget(self.preflight_details)
 
         self.btn_next_step = QPushButton("Open the recommended next step")
-        self.btn_next_step.clicked.connect(lambda: self.navigate_requested.emit(self.btn_next_step.property("target") or "subscriptions"))
-        preflight_layout.addWidget(self.btn_next_step, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.btn_next_step.clicked.connect(
+            lambda: self.navigate_requested.emit(
+                self.btn_next_step.property("target") or "subscriptions"
+            )
+        )
+        preflight_layout.addWidget(
+            self.btn_next_step, alignment=Qt.AlignmentFlag.AlignLeft
+        )
+
         preflight_layout.addStretch()
 
         lower_row.addWidget(self.preflight_card, 2)
         layout.addLayout(lower_row)
 
-        self.refresh_table()
+        self.refresh()
 
-    def refresh_table(self) -> None:
+    # ── Public API ──────────────────────────────────────
+
+    def refresh(self) -> None:
+        """Reload all dashboard data from the current state."""
         subscriptions = len(self.app_state.subscriptions)
         nodes = len(self.app_state.nodes)
         chains = len(self.app_state.chains)
@@ -239,32 +279,54 @@ class DashboardPage(QWidget):
         )
         self.metric_tun.set_value(
             "On" if self.app_state.enable_tun else "Off",
-            "Selected chain is active for system traffic" if self.app_state.enable_tun else "Optional system-wide routing is disabled",
+            "Selected chain is active for system traffic"
+            if self.app_state.enable_tun
+            else "Optional system-wide routing is disabled",
         )
         self.runtime_card.set_value(
             self._runtime_text,
-            f"Core: {self.app_state.core_type}" + (" • executable ready" if exe_path else " • executable missing"),
+            f"Core: {self.app_state.core_type}"
+            + (" • executable ready" if exe_path else " • executable missing"),
         )
 
         sources_text = "Complete" if subscriptions else "Missing"
         nodes_text = "Complete" if nodes else "Missing"
-        routing_text = "Complete" if chains and ports else "In progress" if chains or ports else "Missing"
+        routing_text = (
+            "Complete"
+            if chains and ports
+            else "In progress"
+            if chains or ports
+            else "Missing"
+        )
         core_text = "Complete" if exe_path else "Missing"
         run_text = "Ready" if self._can_start else "Blocked"
 
-        self.step_sources.setText(f"1. Sources: {sources_text} — add subscriptions or import individual node URIs.")
-        self.step_nodes.setText(f"2. Nodes: {nodes_text} — review the available nodes and remove unusable entries.")
-        self.step_routing.setText(f"3. Routing: {routing_text} — build chains and bind them to local ports.")
-        self.step_core.setText(f"4. Core setup: {core_text} — confirm the executable path and defaults.")
-        self.step_run.setText(f"5. Run: {run_text} — apply configuration and start only when blockers are cleared.")
-
-        self.btn_apply.setEnabled(self._can_apply)
-        self.btn_start.setEnabled(self._can_start)
-        self.btn_stop.setEnabled(self._runtime_text == "Running")
+        self.step_sources.setText(
+            f"1. Sources: {sources_text} — add subscriptions or import individual node URIs."
+        )
+        self.step_nodes.setText(
+            f"2. Nodes: {nodes_text} — review the available nodes and remove unusable entries."
+        )
+        self.step_routing.setText(
+            f"3. Routing: {routing_text} — build chains and bind them to local ports."
+        )
+        self.step_core.setText(
+            f"4. Core setup: {core_text} — confirm the executable path and defaults."
+        )
+        self.step_run.setText(
+            f"5. Run: {run_text} — apply configuration and start only when blockers are cleared."
+        )
 
     def set_runtime_state(self, is_running: bool) -> None:
         self._runtime_text = "Running" if is_running else "Stopped"
-        self.refresh_table()
+        if is_running:
+            self.heartbeat.start()
+            self.runtime_card.set_accent("#2ecc71")
+        else:
+            self.heartbeat.stop()
+            self.opacity_effect.setOpacity(1.0)
+            self.runtime_card.set_accent("#1f2b33")
+        self.refresh()
 
     def set_preflight_summary(
         self,
@@ -278,15 +340,28 @@ class DashboardPage(QWidget):
         self._can_start = can_start
 
         if blockers:
-            self.preflight_summary.setText(f"{len(blockers)} blocking issue(s) need attention.")
-            details = blockers + ([f"Warning: {warning}" for warning in warnings] if warnings else [])
+            self.preflight_summary.setText(
+                f"{len(blockers)} blocking issue(s) need attention."
+            )
+            details = blockers + (
+                [f"Warning: {warning}" for warning in warnings] if warnings else []
+            )
         elif warnings:
-            self.preflight_summary.setText("The workspace is usable, but there are warnings to review.")
+            self.preflight_summary.setText(
+                "The workspace is usable, but there are warnings to review."
+            )
             details = [f"Warning: {warning}" for warning in warnings]
         else:
-            self.preflight_summary.setText("Everything required for apply/start is in place.")
-            details = ["You can apply the configuration and start the selected core now."]
+            self.preflight_summary.setText(
+                "Everything required for apply/start is in place."
+            )
+            details = [
+                "You can apply the configuration and start the selected core now."
+            ]
 
-        self.preflight_details.setText("\n".join(f"• {detail}" for detail in details[:6]))
+        self.preflight_details.setText(
+            "\n".join(f"• {detail}" for detail in details[:6])
+        )
         self.btn_next_step.setProperty("target", next_target)
-        self.refresh_table()
+        # NOTE: Do NOT call self.refresh() here — that was causing
+        # recursive refresh loops.  The caller already handles refresh.

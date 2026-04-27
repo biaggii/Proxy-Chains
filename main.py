@@ -8,7 +8,7 @@ window with any requested launch actions.
 import sys
 import os
 
-# 把專案根目錄加入 Python 路徑（確保 import 不出錯）
+# Ensure the project root is on the Python path for clean imports.
 project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -18,6 +18,7 @@ from PySide6.QtGui import QFont
 
 from models.app_state import AppState
 from app.ui_main_window import MainWindow
+from app.ui_kit.theme import APP_STYLESHEET
 
 
 def main() -> None:
@@ -28,53 +29,18 @@ def main() -> None:
 
     qt_app = QApplication(sys.argv)
 
-    font = QFont("Microsoft YaHei UI", 9)
+    # Cross-platform font stack – avoids hard-coding a CJK-only typeface.
+    font = QFont()
+    font.setFamilies(["Segoe UI", "Microsoft YaHei UI", "Noto Sans", "sans-serif"])
+    font.setPointSize(9)
     qt_app.setFont(font)
 
-    qt_app.setStyleSheet("""
-        QMainWindow {
-            background-color: #f5f5f5;
-        }
-        QGroupBox {
-            font-weight: bold;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            margin-top: 8px;
-            padding-top: 16px;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 10px;
-            padding: 0 4px;
-        }
-        QPushButton {
-            padding: 5px 12px;
-            border: 1px solid #aaa;
-            border-radius: 3px;
-            background-color: #fff;
-        }
-        QPushButton:hover {
-            background-color: #e8e8e8;
-        }
-        QTableWidget {
-            gridline-color: #ddd;
-            selection-background-color: #cce5ff;
-        }
-        QTabWidget::pane {
-            border: 1px solid #ccc;
-        }
-        QTabBar::tab {
-            padding: 6px 16px;
-        }
-        QTabBar::tab:selected {
-            background: #fff;
-            border-bottom: 2px solid #3498db;
-        }
-    """)
+    # Single source of truth for all QSS (P0 fix: no more cascade war).
+    qt_app.setStyleSheet(APP_STYLESHEET)
 
     qt_app.setQuitOnLastWindowClosed(False)
     window = MainWindow(app_state)
-    
+
     if not app_state.minimize_on_start:
         window.show()
     window.schedule_launch_actions()

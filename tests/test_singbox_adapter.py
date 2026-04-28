@@ -88,6 +88,22 @@ def test_tun_dns_uses_tcp_remote_server_and_direct_resolver(tmp_path) -> None:
     assert config["route"]["default_domain_resolver"]["server"] == "direct_dns"
 
 
+def test_tun_routes_loopback_directly(tmp_path) -> None:
+    """TUN 模式下，127.0.0.0/8 應直接放行，避免本機上游代理被誤導流。"""
+    app_state = _build_app_state(tmp_path)
+    app_state.enable_tun = True
+    app_state.tun_chain_id = "chain1"
+
+    config = _generate_config(app_state)
+
+    loopback_rules = [
+        rule for rule in config["route"]["rules"]
+        if rule.get("ip_cidr") == ["127.0.0.0/8"]
+        and rule.get("outbound") == "DIRECT"
+    ]
+    assert loopback_rules, "Expected an explicit loopback direct route rule"
+
+
 def test_non_tun_dns_does_not_set_invalid_direct_detour(tmp_path) -> None:
     """非 TUN 模式下，DNS server 不應帶入無效的 DIRECT detour。"""
     app_state = _build_app_state(tmp_path)

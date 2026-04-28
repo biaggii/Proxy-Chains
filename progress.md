@@ -33,3 +33,16 @@
 | `python -m compileall app core models parsers utils` | ✅ Clean |
 | Qt smoke test (offscreen) | ✅ `ok` |
 | `pytest tests/ -q` | ✅ 46 passed |
+
+- **2026-04-28**: Re-scoped planning files for cross-repo improvement study using `graphify`, `planning-with-files`, `caveman`, and `karpathy-guidelines`.
+- **2026-04-28**: Confirmed reference repos under `Refer Projects/`: `clash-verge-rev`, `v2rayn`.
+- **2026-04-28**: Bootstrapped `graphify` Python path into `graphify-out/.graphify_python`.
+- **2026-04-28**: Ran `graphify detect .` -> 717 files / ~351,894 words; detected that `Refer Projects` dominates corpus and blocks useful full-root graph run.
+- **2026-04-28**: Read reference repo READMEs to capture high-level comparison targets before narrowing graph scope.
+- **2026-04-28**: Built `.graphify_local_repo/` staging corpus to exclude `Refer Projects` and run local-only graph analysis.
+- **2026-04-28**: Ran local-only graph detect -> 49 files / ~23,814 words.
+- **2026-04-28**: Ran AST extraction -> 624 nodes / 2024 edges raw; merged graph -> 615 nodes / 1766 edges / 24 communities.
+- **2026-04-28**: Generated `graphify-out/graph.json`, `graphify-out/graph.html`, and labeled `graphify-out/GRAPH_REPORT.md`.
+- **2026-04-28**: Benchmarked graph value -> token reduction ratio ~1.0x on this small corpus, so graph utility here is structure clarity, not compression.
+- **2026-04-28**: Verified all tasks. Tests pass (47/47).
+- **2026-04-28**: Translated `TASKS.md` and `build_windows_exe.md` to English per language policy. All planned phases (1-5) complete.

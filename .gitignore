@@ -4,6 +4,7 @@
 .codex/
 .agent/
 .agents/
+Refer Projects/
 # ------- proxy core ---------
 c.bat
 singbox_test.json

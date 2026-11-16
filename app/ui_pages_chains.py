@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal, Qt
 from models.app_state import AppState
+from models.node import Node, NODE_TYPE_CHAIN
 from utils.pattern_rename import expand_pattern
 
 
@@ -51,7 +52,7 @@ class ChainsPage(QWidget):
         self.chain_list.currentRowChanged.connect(self._on_chain_selected)
         left_layout.addWidget(self.chain_list)
 
-        btn_add_empty_chain = QPushButton("Create New Chain")
+        btn_add_empty_chain = QPushButton("Create Chain")
         btn_add_empty_chain.clicked.connect(self._on_add_empty_chain)
         left_layout.addWidget(btn_add_empty_chain)
 
@@ -68,6 +69,13 @@ class ChainsPage(QWidget):
         btn_del_chain = QPushButton("Delete Selected Chain")
         btn_del_chain.clicked.connect(self._on_delete_chain)
         left_layout.addWidget(btn_del_chain)
+
+        btn_create_chain_node = QPushButton("Save as Chain Node")
+        btn_create_chain_node.setToolTip(
+            "Package the selected chain as a reusable node that can be added to another chain."
+        )
+        btn_create_chain_node.clicked.connect(self._on_create_chain_node)
+        left_layout.addWidget(btn_create_chain_node)
         splitter.addWidget(left_widget)
 
         # Right: hop editor
@@ -218,6 +226,51 @@ class ChainsPage(QWidget):
         self.refresh()
         self.data_changed.emit()
         QMessageBox.information(self, "Success", f"Renamed {len(selected_rows)} Chains")
+
+    def _on_create_chain_node(self) -> None:
+        """Package the selected chain as a reusable composite node."""
+        chain = self._get_selected_chain()
+        if chain is None:
+            QMessageBox.information(self, "Create Chain Node", "Select a chain first.")
+            return
+        if not chain.hop_node_ids or not self.app_state.get_nodes_for_chain(chain):
+            QMessageBox.warning(self, "Invalid Chain", "Add valid hops before packaging this chain.")
+            return
+
+        existing = next(
+            (
+                node for node in self.app_state.nodes
+                if node.node_type == NODE_TYPE_CHAIN
+                and node.extra.get("source_chain_id") == chain.chain_id
+            ),
+            None,
+        )
+        if existing:
+            existing.name = chain.name
+            existing.extra["chain_hop_node_ids"] = list(chain.hop_node_ids)
+            chain_node = existing
+            action = "updated"
+        else:
+            chain_node = Node(
+                name=chain.name,
+                node_type=NODE_TYPE_CHAIN,
+                server="",
+                port=0,
+                source_sub="Chain Groups",
+                extra={
+                    "source_chain_id": chain.chain_id,
+                    "chain_hop_node_ids": list(chain.hop_node_ids),
+                },
+            )
+            self.app_state.nodes.append(chain_node)
+            action = "created"
+        self._refresh_combos()
+        self.data_changed.emit()
+        QMessageBox.information(
+            self,
+            "Chain Node Created",
+            f"'{chain_node.name}' was {action} as a reusable chain node. Select it as a hop when creating another chain.",
+        )
 
     def _on_wrap_socks5(self) -> None:
         """Create a new chain = base chain hops + SOCKS5 exit."""

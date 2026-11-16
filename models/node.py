@@ -19,6 +19,7 @@ NODE_TYPE_SS = "shadowsocks"       # Shadowsocks
 NODE_TYPE_WG = "wireguard"         # WireGuard
 NODE_TYPE_SOCKS5 = "socks5"
 NODE_TYPE_HTTP = "http"
+NODE_TYPE_CHAIN = "chain"       # A reusable composition of other node IDs
 NODE_TYPE_UNKNOWN = "unknown"
 
 # 把所有合法類型放在一個清單裡，方便做檢查
@@ -30,6 +31,7 @@ ALL_NODE_TYPES: list[str] = [
     NODE_TYPE_WG,
     NODE_TYPE_SOCKS5,
     NODE_TYPE_HTTP,
+    NODE_TYPE_CHAIN,
     NODE_TYPE_UNKNOWN,
 ]
 
@@ -46,7 +48,7 @@ class Node:
     欄位說明：
     - node_id     : 唯一識別碼（自動產生）
     - name        : 顯示名稱，例如 "香港-01"
-    - node_type   : 節點類型，例如 "vmess", "socks5"
+    - node_type   : Node protocol, or "chain" for a reusable composed route
     - server      : 伺服器地址，例如 "1.2.3.4" 或 "hk.example.com"
     - port        : 伺服器端口號
     - username    : 使用者名稱（socks5/http 可能會用到，其他可空）

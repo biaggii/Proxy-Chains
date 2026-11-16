@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 import json
 import os
+import sys
 from PySide6.QtCore import Signal
 from models.app_state import AppState
 from utils.autorun import set_autorun
@@ -117,6 +118,20 @@ class SettingsPage(QWidget):
         self.check_fragment = QCheckBox("Enable Fragment")
         advanced_form.addRow("", self.check_fragment)
 
+        self.check_final_fragment = QCheckBox("Enable Final TLS Record Fragment")
+        advanced_form.addRow("", self.check_final_fragment)
+
+        self.check_block_quic = QCheckBox("Block QUIC (UDP/443)")
+        advanced_form.addRow("", self.check_block_quic)
+
+        self.input_remote_dns = QLineEdit()
+        self.input_remote_dns.setPlaceholderText("https://cloudflare-dns.com/dns-query")
+        advanced_form.addRow("Remote DNS (HTTPS):", self.input_remote_dns)
+
+        self.input_bootstrap_dns = QLineEdit()
+        self.input_bootstrap_dns.setPlaceholderText("119.29.29.29")
+        advanced_form.addRow("Bootstrap DNS:", self.input_bootstrap_dns)
+
         advanced_hint = QLabel(
             "Leave most advanced options at their defaults unless your provider or route requires a change."
         )
@@ -129,7 +144,8 @@ class SettingsPage(QWidget):
         startup_group = QGroupBox("Startup and Window")
         startup_form = QFormLayout()
         
-        self.check_run_on_startup = QCheckBox("Run on Windows Startup")
+        startup_label = "Run on Login" if os.name == "posix" else "Run on Windows Startup"
+        self.check_run_on_startup = QCheckBox(startup_label)
         self.check_run_on_startup.toggled.connect(self._on_run_startup_toggled)
         startup_form.addRow("", self.check_run_on_startup)
         
@@ -182,7 +198,13 @@ class SettingsPage(QWidget):
         self.check_allow_insecure.setChecked(self.app_state.allow_insecure)
         self.combo_singbox_mux.setCurrentText(self.app_state.singbox_mux_protocol)
         self.check_fragment.setChecked(self.app_state.enable_fragment)
+        self.check_final_fragment.setChecked(self.app_state.enable_final_fragment)
+        self.check_block_quic.setChecked(self.app_state.block_quic)
+        self.input_remote_dns.setText(self.app_state.remote_dns_url)
+        self.input_bootstrap_dns.setText(self.app_state.bootstrap_dns)
+        self.check_run_on_startup.blockSignals(True)
         self.check_run_on_startup.setChecked(self.app_state.run_on_startup)
+        self.check_run_on_startup.blockSignals(False)
         self.check_minimize_on_start.setChecked(self.app_state.minimize_on_start)
         self.check_auto_start_core.setChecked(self.app_state.auto_start_core)
         self.check_close_to_tray.setChecked(self.app_state.close_to_tray)
@@ -194,12 +216,13 @@ class SettingsPage(QWidget):
     def _on_run_startup_toggled(self, checked: bool) -> None:
         success = set_autorun(checked)
         if not success:
-            QMessageBox.warning(self, "Warning", "Failed to update Windows startup registry.")
+            platform_name = "Linux autostart entry" if sys.platform.startswith("linux") else "startup configuration"
+            QMessageBox.warning(self, "Warning", f"Failed to update {platform_name}.")
 
     def _on_core_type_changed(self, text: str) -> None:
         """Try to resolve a sensible executable path for the chosen core."""
         saved_path = self.app_state.core_exe_paths.get(text, "")
-        if saved_path:
+        if saved_path and os.path.isfile(saved_path):
              self.input_exe_path.setText(saved_path)
              return
 
@@ -210,9 +233,9 @@ class SettingsPage(QWidget):
         else:
             self.input_exe_path.clear()
             hints = {
-                "sing-box": "sing-box.exe",
-                "xray": "xray.exe",
-                "mihomo": "mihomo.exe",
+                "sing-box": "sing-box.exe" if os.name == "nt" else "sing-box",
+                "xray": "xray.exe" if os.name == "nt" else "xray",
+                "mihomo": "mihomo.exe" if os.name == "nt" else "mihomo",
             }
             self.input_exe_path.setPlaceholderText(
                 f"Select {hints.get(text, '')} path"
@@ -229,7 +252,7 @@ class SettingsPage(QWidget):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select Core Executable",
             "",
-            "Executable (*.exe);;All Files (*.*)",
+            "Executable (*.exe);;All Files (*)" if os.name == "nt" else "Executable files (*)",
         )
         if file_path:
             self.input_exe_path.setText(file_path)
@@ -247,14 +270,16 @@ class SettingsPage(QWidget):
         self.app_state.allow_insecure = self.check_allow_insecure.isChecked()
         self.app_state.singbox_mux_protocol = self.combo_singbox_mux.currentText()
         self.app_state.enable_fragment = self.check_fragment.isChecked()
+        self.app_state.enable_final_fragment = self.check_final_fragment.isChecked()
+        self.app_state.block_quic = self.check_block_quic.isChecked()
+        self.app_state.remote_dns_url = self.input_remote_dns.text().strip()
+        self.app_state.bootstrap_dns = self.input_bootstrap_dns.text().strip()
         self.app_state.run_on_startup = self.check_run_on_startup.isChecked()
         self.app_state.minimize_on_start = self.check_minimize_on_start.isChecked()
         self.app_state.auto_start_core = self.check_auto_start_core.isChecked()
         self.app_state.close_to_tray = self.check_close_to_tray.isChecked()
         self.app_state.config_output_dir = self.input_config_dir.text().strip()
         self.app_state.core_exe_paths[core_type] = self.input_exe_path.text().strip()
-        
-        set_autorun(self.app_state.run_on_startup)
         
         self.data_changed.emit()
         set_feedback_banner(

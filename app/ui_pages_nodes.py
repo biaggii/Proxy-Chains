@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QDialog, QApplication,
 )
 from PySide6.QtCore import Signal, Qt
-from models.node import Node
+from models.node import Node, NODE_TYPE_CHAIN
 from models.app_state import AppState
 from app.dialogs.node_edit_dialog import NodeEditDialog
 from app.workers.tcp_ping_worker import TcpPingWorker
@@ -31,9 +31,10 @@ class NodesPage(QWidget):
 
     data_changed = Signal()
 
-    def __init__(self, app_state: "AppState", parent=None):
+    def __init__(self, app_state: "AppState", node_group: str = "all", parent=None):
         super().__init__(parent)
         self.app_state = app_state
+        self.node_group = node_group
         self._sort_col = -1
         self._sort_reverse = False
         self._filtered_nodes: list[Node] = []
@@ -56,7 +57,7 @@ class NodesPage(QWidget):
 
         filter_row.addWidget(QLabel("Type:"))
         self.type_filter = QComboBox()
-        self.type_filter.addItems(["All", "vmess", "vless", "trojan", "shadowsocks", "socks5", "http"])
+        self.type_filter.addItems(["All", "vmess", "vless", "trojan", "shadowsocks", "socks5", "http", "wireguard", "chain"])
         self.type_filter.currentTextChanged.connect(self._on_filter_changed)
         filter_row.addWidget(self.type_filter)
 
@@ -76,6 +77,17 @@ class NodesPage(QWidget):
         btn_add_node = QPushButton("Create Node")
         btn_add_node.clicked.connect(self._on_add_new_node)
         add_row.addWidget(btn_add_node)
+
+        if self.node_group == "chain":
+            add_group.setTitle("Reusable Chain Nodes")
+            self.manual_input.hide()
+            btn_manual_add.hide()
+            btn_add_node.hide()
+            self.type_filter.blockSignals(True)
+            self.type_filter.setCurrentText("chain")
+            self.type_filter.blockSignals(False)
+        elif self.node_group == "base":
+            add_group.setTitle("Import Base Nodes")
 
         add_group.setLayout(add_row)
         layout.addWidget(add_group)
@@ -120,6 +132,10 @@ class NodesPage(QWidget):
         self.btn_batch_chain.clicked.connect(self._on_batch_create_chain)
         btn_row.addWidget(self.btn_batch_chain)
 
+        if self.node_group == "chain":
+            for button in (self.btn_edit, self.btn_copy, self.btn_paste, self.btn_ping, self.btn_batch_chain):
+                button.hide()
+
         self.btn_delete = QPushButton("Delete Selected")
         self.btn_delete.clicked.connect(self._on_delete_selected)
         btn_row.addWidget(self.btn_delete)
@@ -155,6 +171,11 @@ class NodesPage(QWidget):
             for node in self.app_state.nodes
             if (not keyword or keyword in node.name.lower())
             and (type_filter == "All" or node.node_type == type_filter)
+            and (
+                self.node_group == "all"
+                or (self.node_group == "chain" and node.node_type == NODE_TYPE_CHAIN)
+                or (self.node_group == "base" and node.node_type != NODE_TYPE_CHAIN)
+            )
         ]
 
         if self._sort_col != -1:
@@ -177,8 +198,8 @@ class NodesPage(QWidget):
             self.table.setItem(row_idx, 0, QTableWidgetItem(node.node_id))
             self.table.setItem(row_idx, 1, QTableWidgetItem(node.name))
             self.table.setItem(row_idx, 2, QTableWidgetItem(node.node_type))
-            self.table.setItem(row_idx, 3, QTableWidgetItem(node.server))
-            self.table.setItem(row_idx, 4, QTableWidgetItem(str(node.port)))
+            self.table.setItem(row_idx, 3, QTableWidgetItem(node.server or "—"))
+            self.table.setItem(row_idx, 4, QTableWidgetItem(str(node.port) if node.port else "—"))
             self.table.setItem(row_idx, 5, QTableWidgetItem(node.source_sub or "Manual"))
 
             lat = getattr(node, "latency", None)
@@ -197,10 +218,14 @@ class NodesPage(QWidget):
         self._lbl_count.setText(
             f"Showing {len(filtered)} / Total {len(self.app_state.nodes)} nodes"
         )
-        self.summary_label.setText(
-            f"{len(self.app_state.nodes)} node(s) available. "
-            "Review imported nodes here, then use the toolbar to test them, copy URIs, or turn selections into chains."
-        )
+        group_count = len(filtered)
+        if self.node_group == "base":
+            summary = f"{group_count} base node(s). Import v2rayN or Clash subscriptions, paste share links, or add nodes manually."
+        elif self.node_group == "chain":
+            summary = f"{group_count} reusable chain node(s). Select these as hops when composing another chain."
+        else:
+            summary = f"{len(self.app_state.nodes)} node(s) available. Review, test, copy, and compose nodes into chains."
+        self.summary_label.setText(summary)
         self._sync_action_buttons()
 
     def _on_filter_changed(self) -> None:
@@ -213,6 +238,9 @@ class NodesPage(QWidget):
         self.btn_ping.setEnabled(has_selection)
         self.btn_batch_chain.setEnabled(has_selection)
         self.btn_delete.setEnabled(has_selection)
+        if self.node_group == "chain":
+            for button in (self.btn_edit, self.btn_copy, self.btn_ping, self.btn_batch_chain):
+                button.setEnabled(False)
 
     # ── Add ───────────────────────────────────────────
 
@@ -279,6 +307,20 @@ class NodesPage(QWidget):
         for row in selected_rows:
             node = self._table_row_to_node.get(row)
             if node:
+                dependents = [
+                    item.name
+                    for item in self.app_state.nodes
+                    if item.node_type == NODE_TYPE_CHAIN
+                    and node.node_id in item.extra.get("chain_hop_node_ids", [])
+                ]
+                if dependents:
+                    QMessageBox.warning(
+                        self,
+                        "Node In Use",
+                        f"Cannot delete '{node.name}' because chain node(s) depend on it: "
+                        + ", ".join(dependents[:5]),
+                    )
+                    continue
                 self.app_state.nodes = [
                     n for n in self.app_state.nodes if n.node_id != node.node_id
                 ]

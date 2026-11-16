@@ -13,14 +13,14 @@ AppState 是整個程式的「大腦」，存放所有資料：
 
 import json
 import os
+import ntpath
+import sys
 
-from models.node import Node
+from models.node import Node, NODE_TYPE_CHAIN
 from models.subscription import Subscription
 from models.chain import Chain
 from models.port_mapping import PortMapping
 
-
-import sys
 
 # Get app running directory regardless of Python script or frozen EXE
 if getattr(sys, 'frozen', False):
@@ -67,6 +67,10 @@ class AppState:
         self.enable_mux: bool = False
         self.allow_insecure: bool = False
         self.enable_fragment: bool = False
+        self.enable_final_fragment: bool = False
+        self.block_quic: bool = True
+        self.remote_dns_url: str = "https://cloudflare-dns.com/dns-query"
+        self.bootstrap_dns: str = "119.29.29.29"
         self.singbox_mux_protocol: str = "h2mux"  # h2mux, smux, yamux
         
         # TUN 設定 (TUN Settings)
@@ -80,18 +84,40 @@ class AppState:
         self.close_to_tray: bool = True
 
     def _get_default_exe_path(self, core_type: str) -> str:
-        """根據核心類型，預設去 ./bin/ 目錄下找找看有沒有對應的 exe"""
+        """Resolve the bundled core executable for the current OS."""
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             
-        bin_dir = os.path.join(base_dir, "bin")
-        exe_name = f"{core_type}.exe"
-        possible_path = os.path.join(bin_dir, exe_name)
-        if os.path.exists(possible_path):
+        if os.name == "nt":
+            candidates = {
+                "sing-box": os.path.join(base_dir, "bin", "sing_box", "sing-box.exe"),
+                "xray": os.path.join(base_dir, "bin", "xray", "xray.exe"),
+                "mihomo": os.path.join(base_dir, "bin", "mihomo", "mihomo.exe"),
+            }
+        else:
+            candidates = {
+                "sing-box": os.path.join(base_dir, "bin", "sing_box", "sing-box"),
+                "xray": os.path.join(base_dir, "bin", "xray", "xray"),
+                "mihomo": os.path.join(base_dir, "bin", "mihomo", "mihomo"),
+            }
+
+        possible_path = candidates.get(core_type, "")
+        if possible_path and os.path.isfile(possible_path) and os.access(possible_path, os.X_OK if os.name != "nt" else os.F_OK):
             return possible_path
         return ""
+
+    @staticmethod
+    def _is_path_for_current_platform(path: str) -> bool:
+        """Reject persisted paths from another OS (e.g. D:\\... on Linux)."""
+        if not path:
+            return False
+        if os.name != "nt" and ntpath.isabs(path):
+            return False
+        if os.name == "nt" and os.path.isabs(path) is False:
+            return False
+        return os.path.isfile(path)
 
     # ================================================================
     # 節點查找（很多地方要用到）
@@ -161,6 +187,10 @@ class AppState:
             "enable_mux": self.enable_mux,
             "allow_insecure": self.allow_insecure,
             "enable_fragment": self.enable_fragment,
+            "enable_final_fragment": self.enable_final_fragment,
+            "block_quic": self.block_quic,
+            "remote_dns_url": self.remote_dns_url,
+            "bootstrap_dns": self.bootstrap_dns,
             "singbox_mux_protocol": self.singbox_mux_protocol,
             "enable_tun": self.enable_tun,
             "tun_chain_id": self.tun_chain_id,
@@ -211,11 +241,24 @@ class AppState:
                     self.core_exe_paths[ct] = self._get_default_exe_path(ct)
         else:
              for ct in ["sing-box", "xray", "mihomo"]:
-                  self.core_exe_paths[ct] = self._get_default_exe_path(ct)
+                self.core_exe_paths[ct] = self._get_default_exe_path(ct)
 
-        self.config_output_dir = state_dict.get(
-            "config_output_dir", os.path.dirname(self.state_file_path)
-        )
+        # Migrate paths saved on another OS and stale bundle layouts. This is
+        # important when a profile/state.json is shared between Windows/Linux.
+        for core_name in ("sing-box", "xray", "mihomo"):
+            saved_path = self.core_exe_paths.get(core_name, "")
+            if not self._is_path_for_current_platform(saved_path):
+                self.core_exe_paths[core_name] = self._get_default_exe_path(core_name)
+
+        saved_config_dir = state_dict.get("config_output_dir", "")
+        if (
+            not saved_config_dir
+            or (os.name != "nt" and ntpath.isabs(saved_config_dir))
+            or (os.name == "nt" and not os.path.isabs(saved_config_dir))
+        ):
+            self.config_output_dir = os.path.join(_base_dir, "logs")
+        else:
+            self.config_output_dir = saved_config_dir
         self.log_level = state_dict.get("log_level", "warning")
         self.enable_ipv6 = state_dict.get("enable_ipv6", False)
         self.enable_udp = state_dict.get("enable_udp", True)
@@ -224,6 +267,14 @@ class AppState:
         self.enable_mux = state_dict.get("enable_mux", False)
         self.allow_insecure = state_dict.get("allow_insecure", False)
         self.enable_fragment = state_dict.get("enable_fragment", False)
+        self.enable_final_fragment = state_dict.get(
+            "enable_final_fragment", self.enable_fragment
+        )
+        self.block_quic = state_dict.get("block_quic", True)
+        self.remote_dns_url = state_dict.get(
+            "remote_dns_url", "https://cloudflare-dns.com/dns-query"
+        )
+        self.bootstrap_dns = state_dict.get("bootstrap_dns", "119.29.29.29")
         self.singbox_mux_protocol = state_dict.get("singbox_mux_protocol", "h2mux")
         self.enable_tun = state_dict.get("enable_tun", False)
         self.tun_chain_id = state_dict.get("tun_chain_id") or ""
@@ -252,15 +303,46 @@ class AppState:
 
     def get_nodes_for_chain(self, chain: Chain) -> list[Node]:
         """
-        根據 chain 的 hop_node_ids，回傳對應的 Node 物件清單。
-        找不到的 node_id 會跳過（可能被刪了）。
+        Resolve a route into concrete core hops, expanding reusable chain nodes.
+
+        A chain node stores its ordered source IDs in
+        ``extra.chain_hop_node_ids``. Nested chain nodes are expanded recursively.
+        Invalid references and cycles invalidate the whole route instead of
+        silently generating a shorter, different proxy path.
         """
         result: list[Node] = []
         for node_id in chain.hop_node_ids:
             node = self.find_node_by_id(node_id)
-            if node is not None:
-                result.append(node)
+            if node is None:
+                return []
+            resolved = self._expand_node(node, set())
+            if resolved is None:
+                return []
+            result.extend(resolved)
         return result
+
+    def _expand_node(self, node: Node, ancestors: set[str]) -> list[Node] | None:
+        """Expand one node, returning None for missing references or cycles."""
+        if node.node_type != NODE_TYPE_CHAIN:
+            return [node]
+        if node.node_id in ancestors:
+            return None
+
+        nested_ids = node.extra.get("chain_hop_node_ids", [])
+        if not isinstance(nested_ids, list) or not nested_ids:
+            return None
+
+        next_ancestors = {*ancestors, node.node_id}
+        expanded: list[Node] = []
+        for nested_id in nested_ids:
+            nested_node = self.find_node_by_id(nested_id)
+            if nested_node is None:
+                return None
+            nested = self._expand_node(nested_node, next_ancestors)
+            if nested is None:
+                return None
+            expanded.extend(nested)
+        return expanded
 
     def is_port_in_use(self, port: int, exclude_mapping_id: str = "") -> bool:
         """檢查某個端口是否已被其他映射使用"""

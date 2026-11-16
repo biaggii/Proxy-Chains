@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, Qt, QRect, QPoint, QPropertyAnimation, Property
 from PySide6.QtGui import QPainter, QColor
 from models.app_state import AppState
+from models.port_mapping import format_proxy_endpoints
 from app.ui_kit.feedback import set_feedback_banner
 
 
@@ -182,7 +183,19 @@ class PortsPage(QWidget):
 
         btn_row = QHBoxLayout()
 
+        btn_copy_http = QPushButton("Copy HTTP CONNECT Endpoints (Recommended)")
+        btn_copy_http.setToolTip(
+            "Recommended for browser/system proxy use: HTTP CONNECT sends the hostname "
+            "to ChainPort so DNS is resolved through the configured remote DNS."
+        )
+        btn_copy_http.clicked.connect(self._on_copy_http_proxy_list)
+        btn_row.addWidget(btn_copy_http)
+
         btn_copy = QPushButton("Copy SOCKS5 Endpoints")
+        btn_copy.setToolTip(
+            "For SOCKS5 clients, enable remote DNS / proxy DNS (often called socks5h). "
+            "Plain SOCKS5 clients may resolve domains locally before connecting."
+        )
         btn_copy.clicked.connect(self._on_copy_proxy_list)
         btn_row.addWidget(btn_copy)
 
@@ -419,14 +432,32 @@ class PortsPage(QWidget):
 
     def _on_copy_proxy_list(self) -> None:
         """Copy all local SOCKS5 endpoints to the clipboard."""
-        lines: list[str] = []
-        for pm in self.app_state.port_mappings:
-            lines.append(f"socks5://{pm.listen_host}:{pm.listen_port}")
-        if not lines:
+        endpoint_text = format_proxy_endpoints(self.app_state.port_mappings, "socks5")
+        if not endpoint_text:
             set_feedback_banner(self.feedback_label, "No port mappings are available to copy.", "warning")
             return
-        text = "\n".join(lines)
         clipboard = QApplication.clipboard()
         if clipboard:
-            clipboard.setText(text)
-        set_feedback_banner(self.feedback_label, f"Copied {len(lines)} SOCKS5 endpoint(s) to the clipboard.", "success")
+            clipboard.setText(endpoint_text)
+        count = len(self.app_state.port_mappings)
+        set_feedback_banner(
+            self.feedback_label,
+            f"Copied {count} SOCKS5 endpoint(s). Enable remote DNS / proxy DNS (socks5h) in the client to avoid local DNS resolution.",
+            "success",
+        )
+
+    def _on_copy_http_proxy_list(self) -> None:
+        """Copy local HTTP proxy endpoints for clients that need proxy-side DNS."""
+        endpoint_text = format_proxy_endpoints(self.app_state.port_mappings, "http")
+        if not endpoint_text:
+            set_feedback_banner(self.feedback_label, "No port mappings are available to copy.", "warning")
+            return
+        clipboard = QApplication.clipboard()
+        if clipboard:
+            clipboard.setText(endpoint_text)
+        count = len(self.app_state.port_mappings)
+        set_feedback_banner(
+            self.feedback_label,
+            f"Copied {count} HTTP CONNECT endpoint(s). Hostnames are sent to ChainPort for proxy-side DNS resolution.",
+            "success",
+        )

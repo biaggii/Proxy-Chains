@@ -75,3 +75,16 @@ class PortMapping:
             f"PortMapping({self.mapping_id}, "
             f"{self.listen_host}:{self.listen_port} -> chain={self.chain_id})"
         )
+
+
+def format_proxy_endpoints(port_mappings: list["PortMapping"], scheme: str) -> str:
+    """Format local port mappings as HTTP or SOCKS proxy URLs."""
+    if scheme not in {"http", "socks5"}:
+        raise ValueError(f"Unsupported proxy scheme: {scheme}")
+    endpoints = []
+    for mapping in port_mappings:
+        host = mapping.listen_host
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        endpoints.append(f"{scheme}://{host}:{mapping.listen_port}")
+    return "\n".join(endpoints)

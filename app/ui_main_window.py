@@ -8,7 +8,7 @@ and the shared ``AppState`` wiring across the full desktop UI.
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTabWidget, QLabel, QMessageBox,
-    QStatusBar, QSystemTrayIcon, QStyle, QMenu, QApplication
+    QSystemTrayIcon, QStyle, QMenu, QApplication, QDialog
 )
 from PySide6.QtGui import QIcon, QAction, QCloseEvent
 from PySide6.QtCore import Qt, Signal, Slot, QObject, QEvent, QTimer
@@ -24,8 +24,8 @@ from app.ui_pages_chains import ChainsPage
 from app.ui_pages_ports import PortsPage
 from app.ui_pages_logs import LogsPage
 from app.ui_pages_settings import SettingsPage
-from app.ui_pages_dashboard import DashboardPage
 from app.ui_pages_routing import RoutingPage
+from app.ui_pages_node_groups import NodeGroupsPage
 
 
 class LogBridge(QObject):
@@ -74,30 +74,30 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
 
-        self.page_dashboard = DashboardPage(self.app_state)
         self.page_subs = SubscriptionsPage(self.app_state)
-        self.page_nodes = NodesPage(self.app_state)
+        self.page_nodes = NodesPage(self.app_state, node_group="base")
+        self.page_chain_nodes = NodesPage(self.app_state, node_group="chain")
         self.page_chains = ChainsPage(self.app_state)
         self.page_ports = PortsPage(self.app_state)
         self.page_routing = RoutingPage(self.app_state, self.page_chains, self.page_ports)
-        self.page_logs = LogsPage()
         self.page_settings = SettingsPage(self.app_state)
+        self.page_node_groups = NodeGroupsPage(
+            self.app_state,
+            self.page_nodes,
+            self.page_chain_nodes,
+            self.page_subs,
+            self.page_routing,
+        )
 
-        self.tabs.addTab(self.page_dashboard, "Home")
-        self.tabs.addTab(self.page_subs, "Subscriptions")
-        self.tabs.addTab(self.page_nodes, "Nodes")
-        self.tabs.addTab(self.page_routing, "Routing")
-        self.tabs.addTab(self.page_logs, "Logs")
+        self.logs_dialog = QDialog(self)
+        self.logs_dialog.setWindowTitle("ChainPort Runtime Logs")
+        self.logs_dialog.resize(1000, 620)
+        logs_layout = QVBoxLayout(self.logs_dialog)
+        self.page_logs = LogsPage(self.logs_dialog)
+        logs_layout.addWidget(self.page_logs)
+
+        self.tabs.addTab(self.page_node_groups, "Node Groups")
         self.tabs.addTab(self.page_settings, "Settings")
-        self._tab_widgets = {
-            "dashboard": self.page_dashboard,
-            "subscriptions": self.page_subs,
-            "nodes": self.page_nodes,
-            "routing": self.page_routing,
-            "logs": self.page_logs,
-            "settings": self.page_settings,
-        }
-
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         main_layout.addWidget(self.tabs)
@@ -121,14 +121,18 @@ class MainWindow(QMainWindow):
         self.btn_apply = QPushButton("Apply")
         self.btn_apply.setMinimumHeight(36)
         self.btn_apply.clicked.connect(self._on_apply)
+
+        self.btn_logs = QPushButton("Logs")
+        self.btn_logs.clicked.connect(self.logs_dialog.show)
+        bottom_row.addWidget(self.btn_logs)
         
         self.btn_run_admin = QPushButton("Run as Admin")
         self.btn_run_admin.setMinimumHeight(36)
         self.btn_run_admin.setStyleSheet("QPushButton { background-color: #f59e0b; color: #1f2937; font-weight: bold; }")
         self.btn_run_admin.clicked.connect(self._relaunch_as_admin)
         
-        import ctypes
-        if ctypes.windll.shell32.IsUserAnAdmin():
+        # The UAC relaunch action is Windows-only. Linux has no ctypes.windll.
+        if os.name != "nt" or self._is_admin():
             self.btn_run_admin.hide()
             
         bottom_row.addWidget(self.btn_run_admin)
@@ -152,13 +156,8 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         """Connect cross-page signals and runtime callbacks."""
-        self.page_subs.data_changed.connect(self._on_data_changed)
-        self.page_nodes.data_changed.connect(self._on_data_changed)
-        self.page_chains.data_changed.connect(self._on_data_changed)
-        self.page_ports.data_changed.connect(self._on_data_changed)
+        self.page_node_groups.data_changed.connect(self._on_data_changed)
         self.page_settings.data_changed.connect(self._on_data_changed)
-        self.page_dashboard.navigate_requested.connect(self._open_tab)
-
         self.log_bridge.log_signal.connect(self.page_logs.append_log)
         self.log_bridge.stopped_signal.connect(self._on_core_exited)
 
@@ -169,12 +168,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_all_pages(self) -> None:
         """Refresh every page from the latest state."""
-        self.page_dashboard.refresh()
-        self.page_subs.refresh()
-        self.page_nodes.refresh()
-        self.page_chains.refresh()
-        self.page_ports.refresh()
-        self.page_routing.refresh()
+        self.page_node_groups.refresh()
         self.page_logs.refresh()
         self.page_settings.refresh()
         self._refresh_action_state()
@@ -205,6 +199,15 @@ class MainWindow(QMainWindow):
         self.tray_icon.show()
 
     def _relaunch_as_admin(self) -> None:
+        if os.name != "nt":
+            QMessageBox.information(
+                self,
+                "Not available on this platform",
+                "Run ChainPort from a terminal with the required privileges. "
+                "The Windows UAC elevation action is not available on Linux.",
+            )
+            return
+
         import ctypes
         import sys
         
@@ -334,7 +337,17 @@ class MainWindow(QMainWindow):
 
                 error_msg = f"Config verification failed!\n\n{output[:500]}"
                 if "Access is denied" in output and self.app_state.enable_tun:
-                    error_msg = "🚨 Administrator Privileges Required!\n\nYou have enabled TUN Mode which creates virtual network interfaces.\nYou MUST right-click the terminal/command prompt and 'Run as Administrator' for sing-box/mihomo to work."
+                    if os.name == "nt":
+                        error_msg = (
+                            "Administrator privileges required. TUN mode creates "
+                            "virtual network interfaces. Restart ChainPort with "
+                            "Run as Administrator."
+                        )
+                    else:
+                        error_msg = (
+                            "Root privileges required. TUN mode creates virtual "
+                            "network interfaces. Restart ChainPort with sudo."
+                        )
 
                 QMessageBox.warning(
                     self, "Verification Failed", error_msg
@@ -525,24 +538,36 @@ class MainWindow(QMainWindow):
         self.banner.show()
 
     def _open_tab(self, key: str) -> None:
-        page = self._tab_widgets.get(key)
-        if page is not None:
-            self.tabs.setCurrentWidget(page)
+        if key == "logs":
+            self.logs_dialog.show()
+            self.logs_dialog.raise_()
+            self.logs_dialog.activateWindow()
+            return
+        if key in {"settings"}:
+            self.tabs.setCurrentWidget(self.page_settings)
+            return
+        self.tabs.setCurrentWidget(self.page_node_groups)
+        self.page_node_groups.open_section(key)
 
     def _is_admin(self) -> bool:
-        import ctypes
+        if os.name == "nt":
+            import ctypes
 
-        try:
-            return bool(ctypes.windll.shell32.IsUserAnAdmin())
-        except Exception:
-            return False
+            try:
+                return bool(ctypes.windll.shell32.IsUserAnAdmin())
+            except (AttributeError, OSError):
+                return False
+
+        # On POSIX, root is UID 0. This is used only for status/preflight;
+        # never attempt to invoke Windows UAC APIs.
+        return hasattr(os, "geteuid") and os.geteuid() == 0
 
     def _get_preflight_state(self) -> dict[str, object]:
         exe_path = self.app_state.core_exe_paths.get(self.app_state.core_type, "")
         valid_chain_ids = {
             chain.chain_id
             for chain in self.app_state.chains
-            if chain.hop_node_ids and len(self.app_state.get_nodes_for_chain(chain)) == len(chain.hop_node_ids)
+            if chain.hop_node_ids and self.app_state.get_nodes_for_chain(chain)
         }
         valid_mapping_count = sum(
             1 for mapping in self.app_state.port_mappings if mapping.chain_id in valid_chain_ids
@@ -565,8 +590,10 @@ class MainWindow(QMainWindow):
             blockers.append("No usable port mappings exist yet. Bind at least one local port to a valid chain.")
             next_target = "routing"
 
-        if not exe_path:
-            blockers.append("A core executable path is still missing.")
+        if not exe_path or not os.path.isfile(exe_path):
+            blockers.append(
+                "The selected core executable was not found. Choose the current OS binary in Settings."
+            )
             if next_target == "subscriptions":
                 next_target = "settings"
 
@@ -576,7 +603,10 @@ class MainWindow(QMainWindow):
                 next_target = "routing"
             elif not self._is_admin():
                 blockers.append("TUN mode is enabled and requires administrator privileges before starting.")
-                warnings.append("Use 'Run as Admin' before starting the core with TUN enabled.")
+                if os.name == "nt":
+                    warnings.append("Restart ChainPort with 'Run as Admin' before starting TUN mode.")
+                else:
+                    warnings.append("Restart ChainPort with sudo before starting TUN mode.")
                 next_target = "routing"
 
         if self.app_state.subscriptions == [] and self.app_state.nodes:
@@ -588,7 +618,7 @@ class MainWindow(QMainWindow):
                 warnings.append("The TUN chain no longer exists and should be reselected.")
 
         can_apply = bool(valid_mapping_count)
-        can_start = can_apply and bool(exe_path) and not (
+        can_start = can_apply and bool(exe_path) and os.path.isfile(exe_path) and not (
             self.app_state.enable_tun and not self._is_admin()
         ) and not (
             self.app_state.enable_tun and not self.app_state.tun_chain_id
@@ -618,14 +648,8 @@ class MainWindow(QMainWindow):
         self.btn_apply.setEnabled(bool(preflight["can_apply"]) and not is_running)
         self.btn_start.setEnabled(bool(preflight["can_start"]) and not is_running)
         self.btn_stop.setEnabled(is_running)
-        self.btn_run_admin.setVisible(self.app_state.enable_tun and not self._is_admin())
+        self.btn_run_admin.setVisible(
+            os.name == "nt" and self.app_state.enable_tun and not self._is_admin()
+        )
         self.lbl_preflight.setText(str(preflight["title"]))
         self.lbl_context.setText(f"{preflight['detail']} Next: {preflight['next_step']}")
-        self.page_dashboard.set_runtime_state(is_running=is_running)
-        self.page_dashboard.set_preflight_summary(
-            blockers=list(preflight["blockers"]),
-            warnings=list(preflight["warnings"]),
-            next_target=str(preflight["next_target"]),
-            can_apply=bool(preflight["can_apply"]),
-            can_start=bool(preflight["can_start"]),
-        )

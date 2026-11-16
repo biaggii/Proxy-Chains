@@ -9,6 +9,21 @@ Refer Projects/
 c.bat
 singbox_test.json
 bin/
+.agents/
+.claude/
+.clinerules/
+.codex/
+.cursor/
+.github/
+.rtk/
+CLAUDE.md
+RTK.md
+chainport_profile.json
+findings.md
+g.bat
+graphify-out/
+progress.md
+skills-lock.json
 # ---------- Python ----------
 __pycache__/
 *.py[cod]

@@ -9,7 +9,7 @@ from app.ui_main_window import MainWindow
 from models.app_state import AppState
 
 
-def test_launch_actions_disable_tun_before_auto_start(tmp_path: Path) -> None:
+def test_launch_actions_preserve_selected_tun_route(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
 
     state = AppState(str(tmp_path / "state.json"))
@@ -27,7 +27,7 @@ def test_launch_actions_disable_tun_before_auto_start(tmp_path: Path) -> None:
     window._start_core = fake_start_core  # type: ignore[method-assign]
     window._run_launch_actions()
 
-    assert state.enable_tun is False
+    assert state.enable_tun is True
     assert state.tun_chain_id == "chain-1"
     assert calls == [False]
 

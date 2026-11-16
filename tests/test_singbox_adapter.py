@@ -7,7 +7,7 @@ import json
 from core.singbox_adapter import SingBoxAdapter
 from models.app_state import AppState
 from models.chain import Chain
-from models.node import Node, NODE_TYPE_CHAIN, NODE_TYPE_SOCKS5, NODE_TYPE_VLESS, NODE_TYPE_WG
+from models.node import Node, NODE_TYPE_SOCKS5, NODE_TYPE_VLESS, NODE_TYPE_WG
 from models.port_mapping import PortMapping
 
 
@@ -126,7 +126,7 @@ def test_non_tun_dns_uses_the_mapped_chain_detour(tmp_path) -> None:
     )
 
 
-def test_chain_node_is_flattened_before_core_outbound_generation(tmp_path) -> None:
+def test_chain_list_generates_ordered_core_outbounds(tmp_path) -> None:
     app_state = _build_app_state(tmp_path)
     first = app_state.nodes[0]
     second = Node(
@@ -135,15 +135,8 @@ def test_chain_node_is_flattened_before_core_outbound_generation(tmp_path) -> No
         server="203.0.113.20",
         port=1080,
     )
-    reusable = Node(
-        name="Reusable two-hop chain",
-        node_type=NODE_TYPE_CHAIN,
-        server="",
-        port=0,
-        extra={"chain_hop_node_ids": [first.node_id, second.node_id]},
-    )
-    app_state.nodes.extend([second, reusable])
-    app_state.chains[0].hop_node_ids = [reusable.node_id]
+    app_state.nodes.append(second)
+    app_state.chains[0].hop_node_ids = [first.node_id, second.node_id]
 
     config = _generate_config(app_state)
     chain_outbounds = [

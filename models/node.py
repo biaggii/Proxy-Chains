@@ -19,7 +19,7 @@ NODE_TYPE_SS = "shadowsocks"       # Shadowsocks
 NODE_TYPE_WG = "wireguard"         # WireGuard
 NODE_TYPE_SOCKS5 = "socks5"
 NODE_TYPE_HTTP = "http"
-NODE_TYPE_CHAIN = "chain"       # A reusable composition of other node IDs
+# Legacy value accepted only while migrating profiles from the previous release.
 NODE_TYPE_UNKNOWN = "unknown"
 
 # 把所有合法類型放在一個清單裡，方便做檢查
@@ -31,7 +31,6 @@ ALL_NODE_TYPES: list[str] = [
     NODE_TYPE_WG,
     NODE_TYPE_SOCKS5,
     NODE_TYPE_HTTP,
-    NODE_TYPE_CHAIN,
     NODE_TYPE_UNKNOWN,
 ]
 

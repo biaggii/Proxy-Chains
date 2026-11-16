@@ -14,9 +14,7 @@ v2rayN / Clash-compatible subscription / share URI
                     |
                     v
               Chain Node
-          (reusable composition)
-                    |
-          optional nested chains
+          (one saved route)
                     |
                     v
            Local port binding
@@ -26,29 +24,28 @@ v2rayN / Clash-compatible subscription / share URI
 ```
 
 - **Base nodes** are individual VLESS, VMess, Trojan, Shadowsocks, SOCKS5, HTTP, or WireGuard profiles.
-- **Chain nodes** package an ordered list of base nodes and/or other chain nodes. They can be reused as a hop in another chain.
+- **Chain nodes** are the saved routes themselves: one ordered list of base nodes, with an automatically allocated local proxy port. There is no second wrapper object for the same route.
 - **Subscriptions** import v2rayN share-link feeds and Clash YAML feeds. Clash Verge-compatible subscription URLs are supported when the provider returns a Clash-compatible YAML document; this is not a direct Clash Verge profile-database integration.
 - **Port bindings** expose a route on a local mixed (HTTP and SOCKS) proxy listener.
 
 ## Interface
 
-The main window has two top-level tabs:
+The main window has exactly two top-level tabs:
 
-1. **Node Groups** — internal sections for Base Nodes, Chain Nodes, Create Chain / Ports, and Subscriptions.
-2. **Settings** — core selection, executable paths, DNS, TLS fragmentation, QUIC, TUN, and startup preferences.
+1. **Node Groups** — one chain-node list with Create, Add, Edit, and Remove actions. Add opens base-node import and management actions.
+2. **Settings** — core selection, executable paths, DNS, TLS fragmentation, QUIC, and startup preferences.
 
-The bottom action bar provides Apply, Logs, Start, and Stop. The Windows-only Run as Admin action appears when Windows TUN mode needs elevation. Runtime logs open in a separate window so they do not require a third main tab.
+The bottom action bar provides Start, Stop, and Logs. Start generates and validates the selected core configuration before launching it; there is no separate Apply step. Runtime logs open in a separate window. TUN is a single switch in Node Groups and follows the currently selected chain node.
 
-### Create a reusable chain node
+### Create a chain node
 
-1. Import base nodes from a v2rayN subscription, a Clash-compatible YAML subscription, or individual share URIs.
-2. Open **Node Groups → Create Chain / Ports**.
-3. Create a chain and add its hops in entry-to-exit order. Existing chain nodes can also be selected as hops.
-4. Select the chain and choose **Create Chain Node**. ChainPort saves a reusable composite node.
-5. The new chain node appears under **Node Groups → Chain Nodes** and can be used in another chain.
-6. Add a port binding under **Create Chain / Ports**, then Apply and Start.
+1. Choose **Node Groups → Add** to import a subscription, paste a share URI, create a base node manually, or manage imported profiles.
+2. Choose **Create**, name the route, and select its base-node hops in entry-to-exit order.
+3. Save the chain. ChainPort automatically allocates a local mixed-proxy port.
+4. Select a chain node and enable the TUN switch if system-wide routing is required.
+5. Choose **Start**. ChainPort generates and validates the configuration, then starts the selected core.
 
-Nested chain nodes are expanded into their concrete protocol hops before a core configuration is generated. Cyclic or broken references invalidate the route rather than silently changing its path.
+Existing profiles created by earlier versions are migrated from the old duplicate Chain Node wrapper into the single canonical Chain model. Missing base-node references invalidate a route rather than silently changing its path.
 
 ## Requirements
 
@@ -112,11 +109,10 @@ python main.py
 
 Recommended first run:
 
-1. Add a subscription or import a share URI in Node Groups.
-2. Build a chain and package it as a Chain Node if it should be reusable.
-3. Add a local port binding.
-4. Confirm the core executable in Settings.
-5. Apply the configuration, then Start the core.
+1. Use **Add** to import a subscription or paste a share URI.
+2. Choose **Create** and arrange the base-node hops.
+3. Confirm the core executable in Settings.
+4. Choose **Start**. A local proxy port is allocated automatically for every chain.
 
 Use the HTTP CONNECT endpoint for browser/system proxy settings when you want the hostname to reach ChainPort for proxy-side DNS resolution. SOCKS clients should use remote DNS (often called `socks5h`) rather than resolving target hostnames locally.
 

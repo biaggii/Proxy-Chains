@@ -56,21 +56,22 @@ The simplified product should expose exactly two primary navigation items:
 
 ### 1. Node Groups
 
-The main workspace should show two groups:
+The main workspace is one chain-node list with four actions:
 
-- **Base Nodes:** individual VLESS, VMess, Trojan, Shadowsocks, SOCKS5, HTTP, or WireGuard profiles. Users can add, edit, delete, search, test, and refresh their sources.
-- **Chain Nodes:** reusable compositions built from base nodes and previously saved chain nodes.
+- **Create:** open a composer to name a route and select/reorder base-node hops.
+- **Add:** import a v2rayN or Clash-compatible subscription, paste a share URI, or manage existing base nodes.
+- **Edit / Remove:** update or delete the selected chain route.
+- A single TUN switch routes system traffic through the currently selected chain.
 
-Primary action: **Create Chain**.
+Each saved `Chain` is the chain node. Do not store a second `Node(type=chain)` wrapper for the same route. Allocate a local mixed-proxy port automatically for each chain.
 
 The chain composer should support:
 
-1. Name the new chain node.
-2. Select one or more base nodes and/or existing chain nodes.
+1. Name the chain.
+2. Select one or more base nodes.
 3. Reorder hops from entry to exit.
-4. Preview the fully expanded hop sequence and protocol compatibility.
-5. Save as a reusable chain node.
-6. Optionally publish it to a local HTTP/SOCKS port.
+4. Preview the route and protocol compatibility.
+5. Save the chain; a local port is assigned automatically.
 
 Subscriptions should be managed inside Node Groups, not as a separate top-level destination. Import formats should be explicit (`Auto`, `v2rayN`, `Clash YAML`) and show parse errors and node counts. Clash Verge compatibility means accepting its Clash-compatible subscription output; it does not imply reading Clash Verge's local application database.
 
@@ -79,42 +80,36 @@ Subscriptions should be managed inside Node Groups, not as a separate top-level 
 Keep runtime and platform controls in one place:
 
 - Core engine and executable path
-- Local listen address and default port allocation
+- Automatic local mixed-proxy port allocation
 - DNS provider and bootstrap resolver
 - TLS fragmentation and QUIC policy
-- TUN and LAN access
 - Startup behaviour and platform integration
 - Import/export and diagnostics
 
-Apply / Start / Stop should remain global actions. Logs should be a drawer or secondary window, not a third primary navigation item.
+Start must generate and validate the selected core configuration before launching it. There is no separate Apply action. Stop remains a separate action. Logs are a secondary window, not a third primary navigation item.
 
 ## Domain model changes recommended before a full port
 
-The current Python implementation represents a composed route as a `Node` with `node_type="chain"` and nested source IDs in `extra`. That is a useful compatibility bridge, but the native model should make the distinction explicit:
+The current Python implementation uses `Chain` as the single canonical chain-node model. Previous releases also stored a duplicate `Node(type=chain)` wrapper; the current loader migrates those profiles by flattening their references and removing the wrapper. The native model should keep the simpler canonical structure:
 
 ```text
 Node
   id, name, protocol, endpoint, credentials, tls, transport, source_id
 
-ChainNode
-  id, name, ordered_hops: []NodeReference
-
-NodeReference
-  kind: base | chain
-  id
+Chain
+  id, name, ordered_hops: []BaseNodeID
 
 SubscriptionSource
   id, name, url, format, last_refresh, imported_node_ids
 
 PortBinding
-  id, chain_node_id, listen_host, listen_port, protocols
+  id, chain_id, listen_host, automatically_assigned_port, protocols
 ```
 
 Required invariants:
 
-- Chain references must resolve.
-- A chain cannot reference itself directly or indirectly.
-- A chain node must contain at least one hop.
+- Every chain reference must resolve to a base node.
+- A chain must contain at least one hop.
 - Deleting a base node used by a chain must be blocked or require an explicit cascade/replacement.
 - Subscription refresh should preserve stable node identity where possible, or report which saved chains became invalid.
 - Core generators consume a flattened, validated sequence of protocol nodes. They should never need to understand UI group structures.
@@ -124,14 +119,14 @@ Required invariants:
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
 | 0 | Stabilise current Python app and two-tab UX | Current tests pass; profile format documented |
-| 1 | Go domain package | Round-trip fixtures for existing `state.json`; chain validation and nested expansion tests |
+| 1 | Go domain package | Round-trip fixtures for existing `state.json`; chain validation and legacy-wrapper migration tests |
 | 2 | Go subscription package | v2rayN and Clash YAML fixture parity; cancellation and timeout tests |
 | 3 | Go core generators | Golden output tests for sing-box, Xray, and Mihomo; each core's own config validator passes |
 | 4 | Go process manager | Start/stop, stdout/stderr streaming, restart, and crash recovery tests |
 | 5 | Wails v3 two-section UI | Node Groups composer and Settings; cross-platform smoke builds |
 | 6 | Compatibility and cutover | Import/export old profiles; Windows/Linux/macOS test matrix; signed release packages |
 
-Do not attempt a big-bang rewrite. Keep the Python release working while the Go domain and config generators are proven against existing fixture files. The first native milestone should be a CLI that can load a profile, validate nested chains, generate all three core configs, and run the relevant core's config checker. Add Wails only after that CLI is stable.
+Do not attempt a big-bang rewrite. Keep the Python release working while the Go domain and config generators are proven against existing fixture files. The first native milestone should be a CLI that can load a profile, validate chains, generate all three core configs, and run the relevant core's config checker. Add Wails only after that CLI is stable.
 
 ## Risks and decisions
 
@@ -144,4 +139,4 @@ Do not attempt a big-bang rewrite. Keep the Python release working while the Go 
 
 ## Decision
 
-**Recommended direction: Go + Wails v3, staged migration, external proxy cores retained.** First finish and validate the simplified two-section Python UX and nested-chain domain behaviour. Then port the domain and core generators to Go with golden tests. This reduces product risk and avoids rewriting the part of the system that already performs the actual proxying.
+**Recommended direction: Go + Wails v3, staged migration, external proxy cores retained.** First finish and validate the simplified two-section Python UX and single canonical Chain model. Then port the domain and core generators to Go with golden tests. This reduces product risk and avoids rewriting the part of the system that already performs the actual proxying.

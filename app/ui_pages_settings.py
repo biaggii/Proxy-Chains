@@ -6,8 +6,6 @@ Responsibilities:
   - Configure executable and config output paths
   - Adjust startup, advanced network, and profile import/export options
 
-NOTE: The "Quick Start" guide lives exclusively on the Dashboard.
-      It is NOT duplicated here.
 """
 
 from PySide6.QtWidgets import (
@@ -38,11 +36,11 @@ class SettingsPage(QWidget):
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
 
-        self.feedback_label = QLabel("Review the Home tab for readiness hints after saving settings.")
+        self.feedback_label = QLabel("Runtime and network options for the selected proxy core.")
         self.feedback_label.setWordWrap(True)
         set_feedback_banner(
             self.feedback_label,
-            "Review the Home tab for readiness hints after saving settings.",
+            "Runtime and network options for the selected proxy core.",
             "info",
         )
         main_layout.addWidget(self.feedback_label)
@@ -52,6 +50,7 @@ class SettingsPage(QWidget):
         scroll_area.setFrameShape(QScrollArea.NoFrame)
         
         scroll_widget = QWidget()
+        scroll_widget.setObjectName("settingsContent")
         layout = QVBoxLayout(scroll_widget)
 
         core_group = QGroupBox("Basic Setup")
@@ -154,8 +153,8 @@ class SettingsPage(QWidget):
 
         self.check_auto_start_core = QCheckBox("Start Core Automatically on App Launch")
         self.check_auto_start_core.setToolTip(
-            "The app will refresh config files and start the selected core when it launches. "
-            "Automatic launch starts chains only and does not enable TUN."
+            "The app generates and validates the current chain configuration, then starts the selected core on login. "
+            "If TUN is enabled, its selected chain is included and normal privilege requirements apply."
         )
         startup_form.addRow("", self.check_auto_start_core)
 
@@ -178,8 +177,6 @@ class SettingsPage(QWidget):
         
         data_group.setLayout(data_layout)
         layout.addWidget(data_group)
-
-        # Quick Start guide removed — it lives exclusively on Dashboard.
 
         layout.addStretch()
         
@@ -284,7 +281,7 @@ class SettingsPage(QWidget):
         self.data_changed.emit()
         set_feedback_banner(
             self.feedback_label,
-            "Settings saved. Re-apply or restart the core if runtime behavior changed.",
+            "Settings saved. Restart the core if runtime behaviour changed.",
             "success",
         )
 

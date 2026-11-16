@@ -9,18 +9,15 @@ individual pages can accidentally override these tokens.  Import
 
 # ── Colour palette ────────────────────────────────────────────────
 _BG_WINDOW = "#f3f5f9"
-_BG_CARD = "#ffffff"
+_BG_SURFACE = "#ffffff"
+_BG_SUBTLE = "#f4f7fb"
 _BORDER_CARD = "#d8dfeb"
 _TAB_IDLE = "#dde4ef"
 _TAB_ACTIVE_BG = "#1f4b99"
 _TAB_ACTIVE_FG = "#ffffff"
-_ACCENT_PRIMARY = "#1f4b99"
-_ACCENT_SUCCESS = "#2d7d46"
-_ACCENT_DANGER = "#c0392b"
-_ACCENT_WARNING = "#f59e0b"
 _TEXT_PRIMARY = "#1f2b33"
 _TEXT_SECONDARY = "#465158"
-_TEXT_MUTED = "#64748b"
+_TEXT_DISABLED = "#687586"
 _SELECTION_BG = "#cce5ff"
 _GRID_LINE = "#ddd"
 
@@ -34,42 +31,165 @@ FEEDBACK_COLORS: dict[str, tuple[str, str]] = {
 
 # ── Single source of truth for all QSS ────────────────────────────
 APP_STYLESHEET = f"""
-/* ── Window ────────────────────────────────────────── */
-QMainWindow {{
-    background: {_BG_WINDOW};
+/* Explicit foreground/background colours avoid unreadable platform palettes. */
+QWidget {{
+    color: {_TEXT_PRIMARY};
+    font-size: 16px;
 }}
-
-/* ── Group boxes ───────────────────────────────────── */
+QMainWindow, QWidget#centralWidget, QTabWidget::pane {{
+    background-color: {_BG_WINDOW};
+}}
+QDialog, QMessageBox {{
+    color: {_TEXT_PRIMARY};
+    background-color: {_BG_WINDOW};
+}}
+QLabel {{
+    color: {_TEXT_PRIMARY};
+    background: transparent;
+}}
+QLabel#pageTitle {{
+    color: {_TEXT_PRIMARY};
+    font-size: 24px;
+    font-weight: 700;
+}}
+QLabel#pageSubtitle {{
+    color: {_TEXT_SECONDARY};
+    font-size: 14px;
+}}
 QGroupBox {{
-    font-weight: bold;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    margin-top: 8px;
-    padding-top: 16px;
+    color: {_TEXT_PRIMARY};
+    background-color: {_BG_SURFACE};
+    border: 1px solid {_BORDER_CARD};
+    border-radius: 8px;
+    margin-top: 13px;
+    padding: 18px 12px 12px 12px;
 }}
 QGroupBox::title {{
+    color: {_TEXT_PRIMARY};
+    background-color: {_BG_SURFACE};
     subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 4px;
+    subcontrol-position: top left;
+    left: 12px;
+    padding: 0 6px;
+    font-weight: 700;
 }}
-
-/* ── Buttons ───────────────────────────────────────── */
-QPushButton {{
-    padding: 5px 12px;
-    border: 1px solid #aaa;
-    border-radius: 3px;
-    background-color: #fff;
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit {{
+    color: {_TEXT_PRIMARY};
+    background: #ffffff;
+    selection-background-color: {_SELECTION_BG};
+    selection-color: {_TEXT_PRIMARY};
+    border: 1px solid #aeb9c8;
+    border-radius: 5px;
+    padding: 6px 8px;
+    min-height: 25px;
 }}
-QPushButton:hover {{
-    background-color: #e8e8e8;
-}}
-
-/* ── Tables ────────────────────────────────────────── */
-QTableWidget {{
+QTableWidget, QListWidget, QTreeWidget {{
+    color: {_TEXT_PRIMARY};
+    background: #ffffff;
+    alternate-background-color: {_BG_SUBTLE};
     gridline-color: {_GRID_LINE};
     selection-background-color: {_SELECTION_BG};
+    selection-color: {_TEXT_PRIMARY};
+    border: 1px solid {_BORDER_CARD};
 }}
-
+QScrollArea, QScrollArea > QWidget > QWidget, QAbstractScrollArea::viewport {{
+    color: {_TEXT_PRIMARY};
+    background-color: {_BG_WINDOW};
+}}
+QHeaderView::section {{
+    color: {_TEXT_PRIMARY};
+    background: #e9eef5;
+    padding: 9px 10px;
+    border: 0;
+    border-bottom: 1px solid {_BORDER_CARD};
+    font-weight: 600;
+}}
+QCheckBox {{
+    color: {_TEXT_PRIMARY};
+    spacing: 8px;
+}}
+QCheckBox:disabled {{
+    color: {_TEXT_DISABLED};
+}}
+QCheckBox::indicator {{
+    width: 18px;
+    height: 18px;
+    border: 1px solid #77869a;
+    border-radius: 4px;
+    background-color: #ffffff;
+}}
+QCheckBox::indicator:checked {{
+    background-color: #1f4b99;
+    border: 1px solid #1f4b99;
+}}
+QCheckBox::indicator:disabled {{
+    background-color: #e3e8ef;
+    border-color: #b9c2ce;
+}}
+QPushButton {{
+    color: {_TEXT_PRIMARY};
+    background-color: {_BG_SURFACE};
+    min-height: 30px;
+    padding: 6px 14px;
+    border: 1px solid #aeb9c8;
+    border-radius: 5px;
+}}
+QPushButton:hover {{
+    background-color: #eaf1fb;
+    border-color: #7894b8;
+}}
+QPushButton:pressed {{
+    background-color: #dce8f7;
+}}
+QPushButton:disabled {{
+    color: {_TEXT_DISABLED};
+    background-color: #edf0f4;
+    border-color: #d5dbe3;
+}}
+QMenu {{
+    color: {_TEXT_PRIMARY};
+    background-color: #ffffff;
+    border: 1px solid #aeb9c8;
+    padding: 5px;
+}}
+QMenu::item {{
+    color: {_TEXT_PRIMARY};
+    background-color: transparent;
+    padding: 8px 28px 8px 12px;
+    min-width: 230px;
+}}
+QMenu::item:selected {{
+    color: #ffffff;
+    background-color: #1f4b99;
+    border-radius: 3px;
+}}
+QMenu::item:disabled {{
+    color: {_TEXT_DISABLED};
+}}
+QMenu::separator {{
+    height: 1px;
+    background-color: {_BORDER_CARD};
+    margin: 5px 6px;
+}}
+QComboBox QAbstractItemView {{
+    color: {_TEXT_PRIMARY};
+    background-color: #ffffff;
+    selection-color: #ffffff;
+    selection-background-color: #1f4b99;
+    border: 1px solid #aeb9c8;
+}}
+QToolTip {{
+    color: #ffffff;
+    background-color: #263445;
+    border: 1px solid #52647a;
+    padding: 5px 7px;
+}}
+QTabBar::tab {{
+    color: {_TEXT_PRIMARY};
+}}
+QStatusBar {{
+    color: {_TEXT_PRIMARY};
+}}
 /* ── Top-level tab bar ─────────────────────────────── */
 QTabWidget::pane {{
     border: 0;
@@ -91,66 +211,6 @@ QLabel#bannerLabel {{
     border-radius: 10px;
     padding: 10px 14px;
     font-weight: 600;
-}}
-
-/* ── Dashboard hero / cards ────────────────────────── */
-QFrame#dashboardHero,
-QFrame#dashboardPanel,
-QFrame#dashboardStatCard,
-QFrame#dashboardMetricCard {{
-    background: {_BG_CARD};
-    border: 1px solid {_BORDER_CARD};
-    border-radius: 14px;
-}}
-QLabel#dashboardHeroTitle {{
-    font-size: 24px;
-    font-weight: 700;
-    color: {_TEXT_PRIMARY};
-}}
-QLabel#dashboardHeroSubtitle {{
-    color: {_TEXT_SECONDARY};
-}}
-QLabel#dashboardPanelTitle,
-QLabel#dashboardStatTitle {{
-    font-size: 12px;
-    font-weight: 700;
-    color: {_TEXT_MUTED};
-    text-transform: uppercase;
-}}
-QLabel#dashboardStatValue {{
-    font-size: 24px;
-    font-weight: 700;
-    color: #102646;
-}}
-QLabel#dashboardPreflightTitle {{
-    font-size: 18px;
-    font-weight: 700;
-    color: #102646;
-}}
-
-/* ── Routing workspace cards & nested tabs ─────────── */
-QFrame#routingStatCard {{
-    background: {_BG_CARD};
-    border: 1px solid {_BORDER_CARD};
-    border-radius: 12px;
-}}
-QTabWidget#routingTabs::pane {{
-    border: 1px solid {_BORDER_CARD};
-    border-radius: 12px;
-    background: {_BG_CARD};
-    margin-top: 6px;
-}}
-QTabWidget#routingTabs > QTabBar::tab {{
-    min-width: 160px;
-    padding: 10px 14px;
-    margin-right: 6px;
-    border-top-left-radius: 10px;
-    border-top-right-radius: 10px;
-    background: #e8edf5;
-}}
-QTabWidget#routingTabs > QTabBar::tab:selected {{
-    background: {_TAB_ACTIVE_BG};
-    color: {_TAB_ACTIVE_FG};
 }}
 
 /* ── Log area ──────────────────────────────────────── */

@@ -2,7 +2,8 @@ from pathlib import Path
 
 from models.app_state import AppState
 from models.chain import Chain
-from models.node import Node, NODE_TYPE_CHAIN, NODE_TYPE_SOCKS5
+from models.node import Node, NODE_TYPE_SOCKS5
+from models.port_mapping import PortMapping
 
 
 def test_app_state_round_trips_auto_start_core(tmp_path: Path) -> None:
@@ -21,51 +22,52 @@ def test_app_state_round_trips_auto_start_core(tmp_path: Path) -> None:
     assert loaded.auto_start_core is True
 
 
-def test_chain_node_expands_to_original_hops(tmp_path: Path) -> None:
-    state = AppState(str(tmp_path / "state.json"))
+def test_legacy_chain_node_wrappers_migrate_to_chain_model(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state = AppState(str(state_path))
     first = Node("Wireproxy", NODE_TYPE_SOCKS5, "127.0.0.1", 25344)
     second = Node("Exit", NODE_TYPE_SOCKS5, "203.0.113.10", 1080)
-    reusable = Node(
+    legacy_chain_node = Node(
         "Wireproxy + Exit",
-        NODE_TYPE_CHAIN,
+        "chain",
         "",
         0,
-        extra={"chain_hop_node_ids": [first.node_id, second.node_id]},
+        extra={"source_chain_id": "old-chain", "chain_hop_node_ids": [first.node_id, second.node_id]},
     )
-    state.nodes = [first, second, reusable]
-    route = Chain("Published route", [reusable.node_id])
+    state.nodes = [first, second, legacy_chain_node]
+    state.chains = [Chain("Outer", [legacy_chain_node.node_id], chain_id="outer-chain")]
+    state.save_to_file()
 
-    assert state.get_nodes_for_chain(route) == [first, second]
+    loaded = AppState(str(state_path))
+    loaded.load_from_file()
+
+    assert all(node.node_type != "chain" for node in loaded.nodes)
+    outer = loaded.find_chain_by_id("outer-chain")
+    assert outer is not None
+    assert [node.node_id for node in loaded.get_nodes_for_chain(outer)] == [
+        first.node_id, second.node_id
+    ]
+    assert loaded.find_chain_by_id("old-chain") is not None
+    assert loaded.port_mappings
 
 
-def test_nested_chain_nodes_expand_recursively(tmp_path: Path) -> None:
-    state = AppState(str(tmp_path / "state.json"))
+def test_each_chain_gets_one_default_local_port(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state = AppState(str(state_path))
     first = Node("Entry", NODE_TYPE_SOCKS5, "127.0.0.1", 25344)
-    second = Node("Exit", NODE_TYPE_SOCKS5, "203.0.113.10", 1080)
-    inner = Node(
-        "Inner",
-        NODE_TYPE_CHAIN,
-        "",
-        0,
-        extra={"chain_hop_node_ids": [first.node_id, second.node_id]},
-    )
-    outer = Node(
-        "Outer",
-        NODE_TYPE_CHAIN,
-        "",
-        0,
-        extra={"chain_hop_node_ids": [inner.node_id]},
-    )
-    state.nodes = [first, second, inner, outer]
+    state.nodes = [first]
+    state.chains = [Chain("A", [first.node_id]), Chain("B", [first.node_id])]
+    state.port_mappings = [
+        PortMapping(21000, state.chains[0].chain_id),
+        PortMapping(21001, state.chains[0].chain_id),
+        PortMapping(21000, state.chains[1].chain_id),
+    ]
+    state.save_to_file()
 
-    assert state.get_nodes_for_chain(Chain("Nested route", [outer.node_id])) == [first, second]
-
-
-def test_cyclic_chain_nodes_are_rejected(tmp_path: Path) -> None:
-    state = AppState(str(tmp_path / "state.json"))
-    first = Node("First", NODE_TYPE_CHAIN, "", 0, extra={"chain_hop_node_ids": []})
-    second = Node("Second", NODE_TYPE_CHAIN, "", 0, extra={"chain_hop_node_ids": [first.node_id]})
-    first.extra["chain_hop_node_ids"] = [second.node_id]
-    state.nodes = [first, second]
-
-    assert state.get_nodes_for_chain(Chain("Invalid", [first.node_id])) == []
+    loaded = AppState(str(state_path))
+    loaded.load_from_file()
+    assert {item.chain_id for item in loaded.port_mappings} == {
+        chain.chain_id for chain in loaded.chains
+    }
+    assert len(loaded.port_mappings) == 2
+    assert len({item.listen_port for item in loaded.port_mappings}) == 2

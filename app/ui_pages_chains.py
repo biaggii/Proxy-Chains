@@ -1,380 +1,309 @@
-"""
-Chain management page.
+"""Single chain-node workspace: create, add, edit, remove, and select TUN route."""
 
-Responsibilities:
-  - Display all chains in a list
-  - Create and delete chains
-  - Edit chain hops (add, remove, reorder nodes)
-  - Add a SOCKS5 exit to an existing chain (advanced, collapsible)
-  - Batch rename selected chains
-"""
-
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QListWidget, QLabel, QMessageBox,
-    QLineEdit, QGroupBox, QFormLayout, QComboBox,
-    QSplitter, QInputDialog,
+    QCheckBox,
+    QHeaderView,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Signal, Qt
+
+from app.dialogs.chain_editor_dialog import ChainEditorDialog
 from models.app_state import AppState
-from models.node import Node, NODE_TYPE_CHAIN
-from utils.pattern_rename import expand_pattern
+from models.chain import Chain
+from models.node import Node
+from models.port_mapping import PortMapping
 
 
 class ChainsPage(QWidget):
-    """Build and edit proxy chains."""
+    """The only route list. Each row is a reusable chain node."""
 
     data_changed = Signal()
 
-    def __init__(self, app_state: "AppState", parent=None):
+    def __init__(self, app_state: AppState, parent=None):
         super().__init__(parent)
         self.app_state = app_state
-        self._init_ui()
+        self._row_chains: list[Chain] = []
+        self._build_ui()
 
-    def _init_ui(self) -> None:
+    def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        self.summary_label = QLabel(
-            "A chain is the ordered route your traffic follows. "
-            "The top hop is the entry, and the last hop is the exit."
-        )
-        self.summary_label.setWordWrap(True)
-        layout.addWidget(self.summary_label)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(14)
 
-        # ── Chain list + hop editor ────────────────────
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        heading = QHBoxLayout()
+        title = QLabel("Chain Nodes")
+        title.setObjectName("pageTitle")
+        heading.addWidget(title)
+        heading.addStretch()
+        self.tun_switch = QCheckBox("Use selected chain for system traffic (TUN)")
+        self.tun_switch.setObjectName("tunSwitch")
+        self.tun_switch.toggled.connect(self._on_tun_toggled)
+        heading.addWidget(self.tun_switch)
+        layout.addLayout(heading)
 
-        # Left: chain list
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        left_layout.addWidget(QLabel("Chains"))
-        self.chain_list = QListWidget()
-        self.chain_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.chain_list.currentRowChanged.connect(self._on_chain_selected)
-        left_layout.addWidget(self.chain_list)
+        self.summary = QLabel("Create a chain from your imported base nodes.")
+        self.summary.setObjectName("pageSubtitle")
+        layout.addWidget(self.summary)
 
-        btn_add_empty_chain = QPushButton("Create Chain")
-        btn_add_empty_chain.clicked.connect(self._on_add_empty_chain)
-        left_layout.addWidget(btn_add_empty_chain)
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Name", "Route", "Local Port", "Hops"])
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
+        self.table.itemSelectionChanged.connect(self._on_selection_changed)
+        self.table.doubleClicked.connect(lambda *_: self._edit_selected())
+        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnWidth(2, 150)
+        self.table.setColumnWidth(3, 90)
+        layout.addWidget(self.table, 1)
 
-        # Batch rename
-        rename_row = QHBoxLayout()
-        self.input_rename_pattern = QLineEdit()
-        self.input_rename_pattern.setPlaceholderText("e.g. US{1-8} or HK{1-5}")
-        rename_row.addWidget(self.input_rename_pattern)
-        btn_batch_rename = QPushButton("Rename Selected")
-        btn_batch_rename.clicked.connect(self._on_batch_rename)
-        rename_row.addWidget(btn_batch_rename)
-        left_layout.addLayout(rename_row)
-
-        btn_del_chain = QPushButton("Delete Selected Chain")
-        btn_del_chain.clicked.connect(self._on_delete_chain)
-        left_layout.addWidget(btn_del_chain)
-
-        btn_create_chain_node = QPushButton("Save as Chain Node")
-        btn_create_chain_node.setToolTip(
-            "Package the selected chain as a reusable node that can be added to another chain."
-        )
-        btn_create_chain_node.clicked.connect(self._on_create_chain_node)
-        left_layout.addWidget(btn_create_chain_node)
-        splitter.addWidget(left_widget)
-
-        # Right: hop editor
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_layout.addWidget(QLabel("Hops (Top to Bottom = Entry to Exit)"))
-
-        self.hop_list = QListWidget()
-        right_layout.addWidget(self.hop_list)
-
-        hop_btns = QHBoxLayout()
-        self.combo_add_node = QComboBox()
-        hop_btns.addWidget(self.combo_add_node)
-        btn_add_hop = QPushButton("Add Hop")
-        btn_add_hop.clicked.connect(self._on_add_hop)
-        hop_btns.addWidget(btn_add_hop)
-        right_layout.addLayout(hop_btns)
-
-        hop_btns2 = QHBoxLayout()
-        btn_up = QPushButton("Move Up")
-        btn_up.clicked.connect(self._on_move_up)
-        hop_btns2.addWidget(btn_up)
-        btn_down = QPushButton("Move Down")
-        btn_down.clicked.connect(self._on_move_down)
-        hop_btns2.addWidget(btn_down)
-        btn_remove_hop = QPushButton("Remove Hop")
-        btn_remove_hop.clicked.connect(self._on_remove_hop)
-        hop_btns2.addWidget(btn_remove_hop)
-        right_layout.addLayout(hop_btns2)
-
-        splitter.addWidget(right_widget)
-        splitter.setSizes([300, 500])
-        layout.addWidget(splitter)
-
-        # ── Advanced: Add SOCKS5 exit (collapsed by default) ──
-        wrap_group = QGroupBox("Advanced: Add SOCKS5 Exit")
-        wrap_group.setCheckable(True)
-        wrap_group.setChecked(False)
-        wrap_form = QFormLayout()
-        self.combo_pre_chain = QComboBox()
-        wrap_form.addRow("Base Chain:", self.combo_pre_chain)
-        self.combo_landing_socks5 = QComboBox()
-        wrap_form.addRow("Exit SOCKS5 Node:", self.combo_landing_socks5)
-        self.input_wrap_name = QLineEdit()
-        self.input_wrap_name.setPlaceholderText("New Route Name")
-        wrap_form.addRow("New Chain Name:", self.input_wrap_name)
-        btn_wrap = QPushButton("Create Exit Chain")
-        btn_wrap.clicked.connect(self._on_wrap_socks5)
-        wrap_form.addRow(btn_wrap)
-        wrap_group.setLayout(wrap_form)
-        layout.addWidget(wrap_group)
-
-    # ── Refresh ───────────────────────────────────────
+        actions = QHBoxLayout()
+        self.btn_create = QPushButton("Create")
+        self.btn_add = QPushButton("Add")
+        self.btn_edit = QPushButton("Edit")
+        self.btn_remove = QPushButton("Remove")
+        for button, callback in (
+            (self.btn_create, self._create_chain),
+            (self.btn_add, self._show_add_menu),
+            (self.btn_edit, self._edit_selected),
+            (self.btn_remove, self._remove_selected),
+        ):
+            button.setMinimumHeight(42)
+            button.clicked.connect(callback)
+            actions.addWidget(button)
+        actions.addStretch()
+        layout.addLayout(actions)
+        self._sync_actions()
 
     def refresh(self) -> None:
-        """Reload all lists and combos."""
-        self._refresh_chain_list()
-        self._refresh_combos()
-        self.summary_label.setText(
-            f"{len(self.app_state.chains)} chain(s) available. "
-            "Build hops in the right panel, or use the advanced section to add a SOCKS5 exit."
+        selected = self._selected_chain()
+        selected_id = selected.chain_id if selected else ""
+        if not selected_id and self.app_state.enable_tun:
+            selected_id = self.app_state.tun_chain_id
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        self._row_chains = list(self.app_state.chains)
+        for chain in self._row_chains:
+            mapping = next(
+                (item for item in self.app_state.port_mappings if item.chain_id == chain.chain_id),
+                None,
+            )
+            if mapping is None:
+                mapping = self._create_mapping(chain.chain_id)
+            hops = self.app_state.get_nodes_for_chain(chain)
+            route = " → ".join(node.name for node in hops) if hops else "Invalid route"
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            values = [chain.name, route, f"127.0.0.1:{mapping.listen_port}", str(len(hops))]
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setData(Qt.ItemDataRole.UserRole, chain.chain_id)
+                self.table.setItem(row, column, item)
+            if not hops:
+                self.table.item(row, 1).setToolTip("This chain contains a missing or invalid node reference.")
+
+        if selected_id:
+            for row, chain in enumerate(self._row_chains):
+                if chain.chain_id == selected_id:
+                    self.table.selectRow(row)
+                    break
+        self.tun_switch.blockSignals(True)
+        self.tun_switch.setChecked(self.app_state.enable_tun)
+        self.tun_switch.blockSignals(False)
+        self.table.blockSignals(False)
+        self.summary.setText(
+            f"{len(self.app_state.chains)} chain node(s) · "
+            f"{len(self.app_state.nodes)} base node(s) · "
+            f"TUN {'On' if self.app_state.enable_tun else 'Off'}"
         )
+        self._sync_actions()
 
-    def _refresh_chain_list(self) -> None:
-        current_row = self.chain_list.currentRow()
-        self.chain_list.clear()
-        for chain in self.app_state.chains:
-            hop_count = chain.hop_count()
-            self.chain_list.addItem(
-                f"[{chain.chain_id}] {chain.name}  ({hop_count} hops)"
-            )
-        if 0 <= current_row < self.chain_list.count():
-            self.chain_list.setCurrentRow(current_row)
+    def _create_mapping(self, chain_id: str) -> PortMapping:
+        used = {item.listen_port for item in self.app_state.port_mappings}
+        port = 20001
+        while port in used:
+            port += 1
+        mapping = PortMapping(listen_port=port, chain_id=chain_id)
+        self.app_state.port_mappings.append(mapping)
+        return mapping
 
-    def _refresh_combos(self) -> None:
-        # Node combo (for adding hops)
-        self.combo_add_node.clear()
-        for node in self.app_state.nodes:
-            self.combo_add_node.addItem(
-                f"[{node.node_id}] {node.name} ({node.node_type})",
-                userData=node.node_id,
-            )
+    def _selected_chain(self) -> Chain | None:
+        row = self.table.currentRow()
+        return self._row_chains[row] if 0 <= row < len(self._row_chains) else None
 
-        # Pre-chain combo
-        self.combo_pre_chain.clear()
-        for chain in self.app_state.chains:
-            self.combo_pre_chain.addItem(
-                f"[{chain.chain_id}] {chain.name}",
-                userData=chain.chain_id,
-            )
+    def _sync_actions(self) -> None:
+        selected = self._selected_chain() is not None
+        self.btn_edit.setEnabled(selected)
+        self.btn_remove.setEnabled(selected)
+        self._row_chains = list(self.app_state.chains)
 
-        # SOCKS5 node combo (only socks5 nodes)
-        self.combo_landing_socks5.clear()
-        for node in self.app_state.nodes:
-            if node.node_type == "socks5":
-                self.combo_landing_socks5.addItem(
-                    f"[{node.node_id}] {node.name} ({node.server}:{node.port})",
-                    userData=node.node_id,
-                )
-
-    # ── Chain operations ──────────────────────────────
-
-    def _on_add_empty_chain(self) -> None:
-        name, ok = QInputDialog.getText(self, "Add", "Enter new Chain Name:")
-        if ok and name.strip():
-            from models.chain import Chain
-            new_chain = Chain(name=name.strip())
-            self.app_state.chains.append(new_chain)
-            self.refresh()
+    def _on_selection_changed(self) -> None:
+        chain = self._selected_chain()
+        if self.app_state.enable_tun and chain:
+            self.app_state.tun_chain_id = chain.chain_id
             self.data_changed.emit()
+        self._sync_actions()
 
-    def _on_delete_chain(self) -> None:
-        selected_rows = sorted(
-            set(idx.row() for idx in self.chain_list.selectedIndexes()),
-            reverse=True,
-        )
-        if not selected_rows:
-            QMessageBox.information(self, "Notice", "Please select a Chain")
+    def _create_chain(self) -> None:
+        dialog = ChainEditorDialog(self.app_state, parent=self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
             return
-        for row in selected_rows:
-            if 0 <= row < len(self.app_state.chains):
-                self.app_state.chains.pop(row)
+        name, hop_ids = dialog.result_values()
+        chain = Chain(name=name, hop_node_ids=hop_ids)
+        self.app_state.chains.append(chain)
+        self._create_mapping(chain.chain_id)
         self.refresh()
-        self.hop_list.clear()
+        self.table.selectRow(len(self.app_state.chains) - 1)
         self.data_changed.emit()
 
-    def _on_batch_rename(self) -> None:
-        """Batch rename using a pattern like US{1-8}."""
-        pattern_text = self.input_rename_pattern.text().strip()
-        if not pattern_text:
-            QMessageBox.warning(self, "Notice", "Please enter rename pattern, e.g.: US{1-8}")
+    def _edit_selected(self) -> None:
+        chain = self._selected_chain()
+        if chain is None:
             return
-
-        selected_rows = sorted(
-            set(idx.row() for idx in self.chain_list.selectedIndexes())
-        )
-        if not selected_rows:
-            QMessageBox.warning(self, "Notice", "Please select Chain(s) to rename")
+        dialog = ChainEditorDialog(self.app_state, chain=chain, parent=self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
             return
-
-        for i, row in enumerate(selected_rows):
-            if 0 <= row < len(self.app_state.chains):
-                self.app_state.chains[row].name = expand_pattern(
-                    pattern_text, i, len(selected_rows)
-                )
-
-        self.input_rename_pattern.clear()
+        chain.name, chain.hop_node_ids = dialog.result_values()
         self.refresh()
         self.data_changed.emit()
-        QMessageBox.information(self, "Success", f"Renamed {len(selected_rows)} Chains")
 
-    def _on_create_chain_node(self) -> None:
-        """Package the selected chain as a reusable composite node."""
-        chain = self._get_selected_chain()
+    def _remove_selected(self) -> None:
+        chain = self._selected_chain()
         if chain is None:
-            QMessageBox.information(self, "Create Chain Node", "Select a chain first.")
             return
-        if not chain.hop_node_ids or not self.app_state.get_nodes_for_chain(chain):
-            QMessageBox.warning(self, "Invalid Chain", "Add valid hops before packaging this chain.")
-            return
-
-        existing = next(
-            (
-                node for node in self.app_state.nodes
-                if node.node_type == NODE_TYPE_CHAIN
-                and node.extra.get("source_chain_id") == chain.chain_id
-            ),
-            None,
+        reply = QMessageBox.question(
+            self, "Remove chain", f"Remove '{chain.name}' and its local port binding?"
         )
-        if existing:
-            existing.name = chain.name
-            existing.extra["chain_hop_node_ids"] = list(chain.hop_node_ids)
-            chain_node = existing
-            action = "updated"
-        else:
-            chain_node = Node(
-                name=chain.name,
-                node_type=NODE_TYPE_CHAIN,
-                server="",
-                port=0,
-                source_sub="Chain Groups",
-                extra={
-                    "source_chain_id": chain.chain_id,
-                    "chain_hop_node_ids": list(chain.hop_node_ids),
-                },
-            )
-            self.app_state.nodes.append(chain_node)
-            action = "created"
-        self._refresh_combos()
-        self.data_changed.emit()
-        QMessageBox.information(
-            self,
-            "Chain Node Created",
-            f"'{chain_node.name}' was {action} as a reusable chain node. Select it as a hop when creating another chain.",
-        )
-
-    def _on_wrap_socks5(self) -> None:
-        """Create a new chain = base chain hops + SOCKS5 exit."""
-        pre_chain_id = self.combo_pre_chain.currentData()
-        landing_node_id = self.combo_landing_socks5.currentData()
-        new_name = self.input_wrap_name.text().strip()
-
-        if not pre_chain_id:
-            QMessageBox.warning(self, "Notice", "Please select a Base Chain")
+        if reply != QMessageBox.StandardButton.Yes:
             return
-        if not landing_node_id:
-            QMessageBox.warning(self, "Notice", "Please select an Exit SOCKS5 Node")
-            return
-        if not new_name:
-            QMessageBox.warning(self, "Notice", "Please enter new Chain Name")
-            return
-
-        pre_chain = self.app_state.find_chain_by_id(pre_chain_id)
-        if pre_chain is None:
-            QMessageBox.warning(self, "Error", "Base chain not found")
-            return
-
-        from models.chain import Chain
-        new_hops = list(pre_chain.hop_node_ids) + [landing_node_id]
-        new_chain = Chain(name=new_name, hop_node_ids=new_hops)
-        self.app_state.chains.append(new_chain)
-
-        self.input_wrap_name.clear()
+        self.app_state.chains = [item for item in self.app_state.chains if item.chain_id != chain.chain_id]
+        self.app_state.port_mappings = [
+            item for item in self.app_state.port_mappings if item.chain_id != chain.chain_id
+        ]
+        if self.app_state.tun_chain_id == chain.chain_id:
+            self.app_state.tun_chain_id = ""
+            self.app_state.enable_tun = False
         self.refresh()
         self.data_changed.emit()
-        QMessageBox.information(
-            self, "Success",
-            f"Created Exit Chain: {new_name} ({len(new_hops)} hops)"
+
+    def _show_context_menu(self, position) -> None:
+        row = self.table.rowAt(position.y())
+        if row >= 0:
+            self.table.selectRow(row)
+        menu = QMenu(self)
+        for label, callback in (
+            ("Create", self._create_chain),
+            ("Add base node / subscription", self._show_add_menu),
+            ("Edit", self._edit_selected),
+            ("Remove", self._remove_selected),
+        ):
+            action = QAction(label, menu)
+            action.triggered.connect(callback)
+            menu.addAction(action)
+        menu.exec(self.table.viewport().mapToGlobal(position))
+
+    def _show_add_menu(self) -> None:
+        menu = QMenu(self)
+        actions = [
+            ("Import subscription…", self._import_subscription),
+            ("Paste node URI…", self._import_uri),
+            ("Create base node…", self._create_base_node),
+            ("Manage base nodes…", self._manage_base_nodes),
+        ]
+        for label, callback in actions:
+            action = QAction(label, menu)
+            action.triggered.connect(callback)
+            menu.addAction(action)
+        menu.exec(self.btn_add.mapToGlobal(self.btn_add.rect().bottomLeft()))
+
+    def _create_base_node(self) -> None:
+        from app.dialogs.node_edit_dialog import NodeEditDialog
+
+        node = Node("New Node", "socks5", "", 1080)
+        dialog = NodeEditDialog(node, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        dialog.save_changes()
+        if not node.server or not 1 <= node.port <= 65535:
+            QMessageBox.warning(self, "Invalid node", "Enter a valid server address and port.")
+            return
+        node.source_sub = "Manual"
+        self._append_imported_nodes([node])
+
+    def _import_uri(self) -> None:
+        text, accepted = QInputDialog.getMultiLineText(self, "Import node", "Paste one share URI:")
+        if not accepted or not text.strip():
+            return
+        from parsers.subscription_fetcher import parse_text_only
+
+        nodes, errors = parse_text_only(text, sub_name="Manual")
+        self._append_imported_nodes(nodes)
+        self._show_import_result(len(nodes), errors)
+
+    def _import_subscription(self) -> None:
+        from models.subscription import Subscription
+        from parsers.subscription_fetcher import fetch_and_parse
+
+        name, accepted = QInputDialog.getText(self, "Import subscription", "Subscription name:")
+        if not accepted or not name.strip():
+            return
+        url, accepted = QInputDialog.getText(self, "Import subscription", "Subscription URL:")
+        if not accepted or not url.strip():
+            return
+        kind, accepted = QInputDialog.getItem(
+            self, "Subscription format", "Format:", ["auto", "v2rayn", "clash"], 0, False
         )
-
-    # ── Hop operations ────────────────────────────────
-
-    def _get_selected_chain(self):
-        """Return the currently selected chain, or None."""
-        row = self.chain_list.currentRow()
-        if row < 0 or row >= len(self.app_state.chains):
-            return None
-        return self.app_state.chains[row]
-
-    def _on_chain_selected(self, row: int) -> None:
-        """Display hops for the selected chain."""
-        self.hop_list.clear()
-        chain = self._get_selected_chain()
-        if chain is None:
+        if not accepted:
             return
+        subscription = Subscription(name=name.strip(), url=url.strip(), sub_type=kind)
+        nodes, errors = fetch_and_parse(subscription)
+        if nodes:
+            self.app_state.subscriptions.append(subscription)
+            self._append_imported_nodes(nodes)
+        self._show_import_result(len(nodes), errors)
 
-        for node_id in chain.hop_node_ids:
-            node = self.app_state.find_node_by_id(node_id)
-            if node:
-                self.hop_list.addItem(
-                    f"[{node.node_id}] {node.name} ({node.node_type}, {node.server}:{node.port})"
-                )
-            else:
-                self.hop_list.addItem(f"[{node_id}] ⚠️ Node Deleted")
-
-    def _on_add_hop(self) -> None:
-        chain = self._get_selected_chain()
-        if chain is None:
-            QMessageBox.information(self, "Notice", "Please select a Chain on the left first")
-            return
-
-        node_id = self.combo_add_node.currentData()
-        if not node_id:
-            QMessageBox.information(self, "Notice", "Please select a Node to add")
-            return
-
-        chain.add_hop(node_id)
-        self._on_chain_selected(self.chain_list.currentRow())
-        self._refresh_chain_list()
+    def _append_imported_nodes(self, nodes) -> None:
+        existing = {node.node_id for node in self.app_state.nodes}
+        self.app_state.nodes.extend(node for node in nodes if node.node_id not in existing)
         self.data_changed.emit()
 
-    def _on_remove_hop(self) -> None:
-        chain = self._get_selected_chain()
-        if chain is None:
-            return
-        hop_row = self.hop_list.currentRow()
-        if hop_row < 0:
-            return
-        chain.remove_hop(hop_row)
-        self._on_chain_selected(self.chain_list.currentRow())
-        self._refresh_chain_list()
-        self.data_changed.emit()
+    def _show_import_result(self, count: int, errors: list[str]) -> None:
+        message = f"Imported {count} base node(s)."
+        if errors:
+            message += "\n\n" + "\n".join(errors[:8])
+        QMessageBox.information(self, "Import complete", message)
 
-    def _on_move_up(self) -> None:
-        chain = self._get_selected_chain()
-        if chain is None:
-            return
-        hop_row = self.hop_list.currentRow()
-        chain.move_hop_up(hop_row)
-        self._on_chain_selected(self.chain_list.currentRow())
-        self.hop_list.setCurrentRow(max(0, hop_row - 1))
-        self.data_changed.emit()
+    def _manage_base_nodes(self) -> None:
+        from app.dialogs.base_nodes_dialog import BaseNodesDialog
 
-    def _on_move_down(self) -> None:
-        chain = self._get_selected_chain()
-        if chain is None:
+        dialog = BaseNodesDialog(self.app_state, self)
+        dialog.data_changed.connect(self.data_changed.emit)
+        dialog.exec()
+
+    def _on_tun_toggled(self, checked: bool) -> None:
+        chain = self._selected_chain()
+        if checked and chain is None:
+            QMessageBox.warning(self, "Select a chain", "Select a chain node first. TUN will use that route.")
+            self.tun_switch.blockSignals(True)
+            self.tun_switch.setChecked(False)
+            self.tun_switch.blockSignals(False)
             return
-        hop_row = self.hop_list.currentRow()
-        chain.move_hop_down(hop_row)
-        self._on_chain_selected(self.chain_list.currentRow())
-        self.hop_list.setCurrentRow(min(self.hop_list.count() - 1, hop_row + 1))
+        self.app_state.enable_tun = checked
+        self.app_state.tun_chain_id = chain.chain_id if checked and chain else ""
+        self.refresh()
         self.data_changed.emit()

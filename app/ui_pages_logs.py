@@ -29,7 +29,7 @@ class LogsPage(QWidget):
         layout = QVBoxLayout(self)
 
         self.summary_label = QLabel(
-            "Runtime output appears here while applying, verifying, or running the selected core."
+            "Core validation and runtime output appear here when you start a chain."
         )
         self.summary_label.setWordWrap(True)
         layout.addWidget(self.summary_label)

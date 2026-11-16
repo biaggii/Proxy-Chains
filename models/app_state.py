@@ -16,7 +16,7 @@ import os
 import ntpath
 import sys
 
-from models.node import Node, NODE_TYPE_CHAIN
+from models.node import Node
 from models.subscription import Subscription
 from models.chain import Chain
 from models.port_mapping import PortMapping
@@ -32,6 +32,7 @@ else:
 
 # Default path for state.json 
 DEFAULT_STATE_FILE = os.path.join(_base_dir, "state.json")
+LEGACY_CHAIN_NODE_TYPE = "chain"
 
 
 class AppState:
@@ -136,38 +137,6 @@ class AppState:
             if chain.chain_id == chain_id:
                 return chain
         return None
-
-    def find_sub_by_id(self, sub_id: str) -> Subscription | None:
-        """用 sub_id 找訂閱"""
-        for sub in self.subscriptions:
-            if sub.sub_id == sub_id:
-                return sub
-        return None
-
-    def find_mapping_by_id(self, mapping_id: str) -> PortMapping | None:
-        """用 mapping_id 找端口映射"""
-        for m in self.port_mappings:
-            if m.mapping_id == mapping_id:
-                return m
-        return None
-
-    # ================================================================
-    # 刪除某個訂閱時，連帶刪除它的節點
-    # ================================================================
-
-    def remove_subscription_and_nodes(self, sub_id: str) -> None:
-        """刪除訂閱，並移除所有來自該訂閱的節點"""
-        # 找到訂閱名稱
-        sub = self.find_sub_by_id(sub_id)
-        if sub is None:
-            return
-        sub_name = sub.name
-
-        # 移除該訂閱
-        self.subscriptions = [s for s in self.subscriptions if s.sub_id != sub_id]
-
-        # 移除來自該訂閱的節點
-        self.nodes = [n for n in self.nodes if n.source_sub != sub_name]
 
     # ================================================================
     # 儲存 / 載入 JSON
@@ -290,63 +259,99 @@ class AppState:
         self.nodes = [
             Node.from_dict(d) for d in state_dict.get("nodes", [])
         ]
-        self.chains = [
-            Chain.from_dict(d) for d in state_dict.get("chains", [])
-        ]
+        self.chains = [Chain.from_dict(d) for d in state_dict.get("chains", [])]
         self.port_mappings = [
             PortMapping.from_dict(d) for d in state_dict.get("port_mappings", [])
         ]
+        self._migrate_legacy_chain_nodes()
+        self._ensure_default_port_mappings()
+
+    def _migrate_legacy_chain_nodes(self) -> None:
+        """Collapse the previous duplicate Node(type=chain) wrapper into Chain."""
+        legacy = {node.node_id: node for node in self.nodes if node.node_type == LEGACY_CHAIN_NODE_TYPE}
+        if not legacy:
+            return
+
+        chains_by_id = {chain.chain_id: chain for chain in self.chains}
+        for node in legacy.values():
+            source_chain_id = node.extra.get("source_chain_id")
+            if source_chain_id and source_chain_id not in chains_by_id:
+                chain = Chain(
+                    name=node.name,
+                    hop_node_ids=list(node.extra.get("chain_hop_node_ids", [])),
+                    chain_id=source_chain_id,
+                )
+                self.chains.append(chain)
+                chains_by_id[chain.chain_id] = chain
+
+        def expand(node_id: str, ancestors: set[str]) -> list[str] | None:
+            wrapper = legacy.get(node_id)
+            if wrapper is None:
+                return [node_id] if self.find_node_by_id(node_id) else None
+            if node_id in ancestors:
+                return None
+            nested = wrapper.extra.get("chain_hop_node_ids", [])
+            if not isinstance(nested, list) or not nested:
+                return None
+            result: list[str] = []
+            for nested_id in nested:
+                resolved = expand(nested_id, {*ancestors, node_id})
+                if resolved is None:
+                    return None
+                result.extend(resolved)
+            return result
+
+        for chain in self.chains:
+            flattened: list[str] = []
+            valid = True
+            for node_id in chain.hop_node_ids:
+                resolved = expand(node_id, set())
+                if resolved is None:
+                    valid = False
+                    break
+                flattened.extend(resolved)
+            if valid:
+                chain.hop_node_ids = flattened
+
+        self.nodes = [node for node in self.nodes if node.node_type != LEGACY_CHAIN_NODE_TYPE]
+
+    def _ensure_default_port_mappings(self) -> None:
+        """Collapse old custom bindings to one automatic local port per chain."""
+        chain_ids = {chain.chain_id for chain in self.chains}
+        unique_mappings: list[PortMapping] = []
+        mapped_chain_ids: set[str] = set()
+        used_ports: set[int] = set()
+        for mapping in self.port_mappings:
+            if mapping.chain_id not in chain_ids or mapping.chain_id in mapped_chain_ids:
+                continue
+            if mapping.listen_port in used_ports:
+                continue
+            unique_mappings.append(mapping)
+            mapped_chain_ids.add(mapping.chain_id)
+            used_ports.add(mapping.listen_port)
+        self.port_mappings = unique_mappings
+
+        next_port = 20001
+        for chain in self.chains:
+            if chain.chain_id in mapped_chain_ids:
+                continue
+            while next_port in used_ports:
+                next_port += 1
+            self.port_mappings.append(PortMapping(listen_port=next_port, chain_id=chain.chain_id))
+            used_ports.add(next_port)
+            mapped_chain_ids.add(chain.chain_id)
+            next_port += 1
 
     # ================================================================
     # 方便的工具方法
     # ================================================================
 
     def get_nodes_for_chain(self, chain: Chain) -> list[Node]:
-        """
-        Resolve a route into concrete core hops, expanding reusable chain nodes.
-
-        A chain node stores its ordered source IDs in
-        ``extra.chain_hop_node_ids``. Nested chain nodes are expanded recursively.
-        Invalid references and cycles invalidate the whole route instead of
-        silently generating a shorter, different proxy path.
-        """
+        """Resolve a chain to its concrete base nodes; fail closed on broken IDs."""
         result: list[Node] = []
         for node_id in chain.hop_node_ids:
             node = self.find_node_by_id(node_id)
-            if node is None:
+            if node is None or node.node_type == LEGACY_CHAIN_NODE_TYPE:
                 return []
-            resolved = self._expand_node(node, set())
-            if resolved is None:
-                return []
-            result.extend(resolved)
+            result.append(node)
         return result
-
-    def _expand_node(self, node: Node, ancestors: set[str]) -> list[Node] | None:
-        """Expand one node, returning None for missing references or cycles."""
-        if node.node_type != NODE_TYPE_CHAIN:
-            return [node]
-        if node.node_id in ancestors:
-            return None
-
-        nested_ids = node.extra.get("chain_hop_node_ids", [])
-        if not isinstance(nested_ids, list) or not nested_ids:
-            return None
-
-        next_ancestors = {*ancestors, node.node_id}
-        expanded: list[Node] = []
-        for nested_id in nested_ids:
-            nested_node = self.find_node_by_id(nested_id)
-            if nested_node is None:
-                return None
-            nested = self._expand_node(nested_node, next_ancestors)
-            if nested is None:
-                return None
-            expanded.extend(nested)
-        return expanded
-
-    def is_port_in_use(self, port: int, exclude_mapping_id: str = "") -> bool:
-        """檢查某個端口是否已被其他映射使用"""
-        for m in self.port_mappings:
-            if m.listen_port == port and m.mapping_id != exclude_mapping_id:
-                return True
-        return False

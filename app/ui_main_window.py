@@ -18,14 +18,9 @@ from models.app_state import AppState
 from core.process_runner import ProcessRunner
 from app.ui_kit.feedback import set_feedback_banner
 
-from app.ui_pages_subscriptions import SubscriptionsPage
-from app.ui_pages_nodes import NodesPage
 from app.ui_pages_chains import ChainsPage
-from app.ui_pages_ports import PortsPage
 from app.ui_pages_logs import LogsPage
 from app.ui_pages_settings import SettingsPage
-from app.ui_pages_routing import RoutingPage
-from app.ui_pages_node_groups import NodeGroupsPage
 
 
 class LogBridge(QObject):
@@ -59,8 +54,8 @@ class MainWindow(QMainWindow):
         ``setStyleSheet()`` here.
         """
         self.setWindowTitle("ChainPort Gateway - Proxy Multi-Chain Manager")
-        self.setMinimumSize(1120, 820)
-        self.resize(1200, 860)
+        self.setMinimumSize(1040, 720)
+        self.resize(1320, 900)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -74,20 +69,8 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
 
-        self.page_subs = SubscriptionsPage(self.app_state)
-        self.page_nodes = NodesPage(self.app_state, node_group="base")
-        self.page_chain_nodes = NodesPage(self.app_state, node_group="chain")
         self.page_chains = ChainsPage(self.app_state)
-        self.page_ports = PortsPage(self.app_state)
-        self.page_routing = RoutingPage(self.app_state, self.page_chains, self.page_ports)
         self.page_settings = SettingsPage(self.app_state)
-        self.page_node_groups = NodeGroupsPage(
-            self.app_state,
-            self.page_nodes,
-            self.page_chain_nodes,
-            self.page_subs,
-            self.page_routing,
-        )
 
         self.logs_dialog = QDialog(self)
         self.logs_dialog.setWindowTitle("ChainPort Runtime Logs")
@@ -96,7 +79,7 @@ class MainWindow(QMainWindow):
         self.page_logs = LogsPage(self.logs_dialog)
         logs_layout.addWidget(self.page_logs)
 
-        self.tabs.addTab(self.page_node_groups, "Node Groups")
+        self.tabs.addTab(self.page_chains, "Node Groups")
         self.tabs.addTab(self.page_settings, "Settings")
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
@@ -118,10 +101,6 @@ class MainWindow(QMainWindow):
 
         bottom_row.addStretch()
 
-        self.btn_apply = QPushButton("Apply")
-        self.btn_apply.setMinimumHeight(36)
-        self.btn_apply.clicked.connect(self._on_apply)
-
         self.btn_logs = QPushButton("Logs")
         self.btn_logs.clicked.connect(self.logs_dialog.show)
         bottom_row.addWidget(self.btn_logs)
@@ -136,16 +115,14 @@ class MainWindow(QMainWindow):
             self.btn_run_admin.hide()
             
         bottom_row.addWidget(self.btn_run_admin)
-        bottom_row.addWidget(self.btn_apply)
-
         self.btn_start = QPushButton("Start")
-        self.btn_start.setMinimumHeight(36)
+        self.btn_start.setMinimumSize(112, 46)
         self.btn_start.setStyleSheet("QPushButton { background-color: #2d7d46; color: white; font-weight: 600; }")
         self.btn_start.clicked.connect(self._on_start)
         bottom_row.addWidget(self.btn_start)
 
         self.btn_stop = QPushButton("Stop")
-        self.btn_stop.setMinimumHeight(36)
+        self.btn_stop.setMinimumSize(112, 46)
         self.btn_stop.setStyleSheet("QPushButton { background-color: #c0392b; color: white; font-weight: 600; }")
         self.btn_stop.clicked.connect(self._on_stop)
         bottom_row.addWidget(self.btn_stop)
@@ -156,7 +133,7 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         """Connect cross-page signals and runtime callbacks."""
-        self.page_node_groups.data_changed.connect(self._on_data_changed)
+        self.page_chains.data_changed.connect(self._on_data_changed)
         self.page_settings.data_changed.connect(self._on_data_changed)
         self.log_bridge.log_signal.connect(self.page_logs.append_log)
         self.log_bridge.stopped_signal.connect(self._on_core_exited)
@@ -164,11 +141,13 @@ class MainWindow(QMainWindow):
     def _load_and_refresh(self) -> None:
         """Load persisted state and refresh all pages."""
         self.app_state.load_from_file()
+        # Persist cross-version migrations (legacy chain wrappers and port rows).
+        self.app_state.save_to_file()
         self._refresh_all_pages()
 
     def _refresh_all_pages(self) -> None:
         """Refresh every page from the latest state."""
-        self.page_node_groups.refresh()
+        self.page_chains.refresh()
         self.page_logs.refresh()
         self.page_settings.refresh()
         self._refresh_action_state()
@@ -299,73 +278,6 @@ class MainWindow(QMainWindow):
         self._refresh_action_state()
 
     @Slot()
-    def _on_apply(self) -> None:
-        """Generate and verify the current core configuration."""
-        adapter = self._get_current_adapter()
-        if adapter is None:
-            return
-
-        preflight = self._get_preflight_state()
-        if not preflight["can_apply"]:
-            self._show_banner(preflight["detail"], "warning")
-            QMessageBox.warning(self, "Action Needed", preflight["detail"])
-            return
-
-        try:
-            config_text, config_path = adapter.generate_config(self.app_state)
-        except Exception as err:
-            QMessageBox.critical(self, "Config Generation Failed", str(err))
-            return
-
-        exe_path = self.app_state.core_exe_paths.get(self.app_state.core_type, "")
-        if exe_path:
-            check_cmd = adapter.get_check_command(config_path, exe_path)
-            success, output = self.process_runner.run_and_wait(check_cmd)
-            if success:
-                self.page_logs.append_log(f"[Verify] ✅ Config verified")
-                self.page_logs.append_log(f"[Verify] Config file: {config_path}")
-                QMessageBox.information(
-                    self, "Apply Success",
-                    f"✅ Config generated and verified successfully!\n\n"
-                    f"File: {config_path}\n"
-                    f"Ports mapped: {len(self.app_state.port_mappings)}"
-                )
-                self._show_banner("Configuration generated and verified successfully.", "success")
-            else:
-                self.page_logs.append_log(f"[Verify] ❌ Config verification failed:")
-                self.page_logs.append_log(output)
-
-                error_msg = f"Config verification failed!\n\n{output[:500]}"
-                if "Access is denied" in output and self.app_state.enable_tun:
-                    if os.name == "nt":
-                        error_msg = (
-                            "Administrator privileges required. TUN mode creates "
-                            "virtual network interfaces. Restart ChainPort with "
-                            "Run as Administrator."
-                        )
-                    else:
-                        error_msg = (
-                            "Root privileges required. TUN mode creates virtual "
-                            "network interfaces. Restart ChainPort with sudo."
-                        )
-
-                QMessageBox.warning(
-                    self, "Verification Failed", error_msg
-                )
-                self._show_banner("Configuration verification failed. Review the logs for details.", "error")
-        else:
-            self.page_logs.append_log(f"[Apply] Config generated: {config_path}")
-            self.page_logs.append_log("[Apply] ⚠️ Core path not set, skipping verification")
-            QMessageBox.information(
-                self, "Apply",
-                f"Config generated (Not verified due to missing core path)\n\nFile: {config_path}"
-            )
-            self._show_banner("Configuration generated. Add a core executable path to enable verification.", "info")
-
-        self.app_state.save_to_file()
-        self._refresh_action_state()
-
-    @Slot()
     def _on_start(self) -> None:
         """Generate config files and start the selected core."""
         self._start_core(interactive=True)
@@ -416,17 +328,6 @@ class MainWindow(QMainWindow):
 
     def _run_launch_actions(self) -> None:
         if self.app_state.auto_start_core:
-            if self.app_state.enable_tun:
-                self.app_state.enable_tun = False
-                self.page_logs.append_log(
-                    "[Launch] TUN mode was disabled for automatic startup. "
-                    "Automatic launch starts chains only."
-                )
-                self._show_banner(
-                    "Automatic launch starts chains only. TUN stays off until you enable it manually.",
-                    "info",
-                )
-                self._refresh_all_pages()
             self._start_core(interactive=False)
 
     def _start_core(self, interactive: bool) -> bool:
@@ -458,6 +359,14 @@ class MainWindow(QMainWindow):
         try:
             _, config_path = adapter.generate_config(self.app_state)
             self.page_logs.append_log(f"[Start] ✅ Config generated: {config_path}")
+            check_cmd = adapter.get_check_command(config_path, exe_path)
+            valid, validation_output = self.process_runner.run_and_wait(check_cmd)
+            if not valid:
+                self.page_logs.append_log(
+                    f"[Start] Configuration validation failed:\n{validation_output}"
+                )
+                raise RuntimeError(f"Configuration validation failed:\n{validation_output}")
+            self.page_logs.append_log("[Start] Configuration validation passed.")
         except Exception as err:
             if interactive:
                 QMessageBox.critical(self, "Error", f"Config generation failed: {err}")
@@ -546,8 +455,7 @@ class MainWindow(QMainWindow):
         if key in {"settings"}:
             self.tabs.setCurrentWidget(self.page_settings)
             return
-        self.tabs.setCurrentWidget(self.page_node_groups)
-        self.page_node_groups.open_section(key)
+        self.tabs.setCurrentWidget(self.page_chains)
 
     def _is_admin(self) -> bool:
         if os.name == "nt":
@@ -572,80 +480,42 @@ class MainWindow(QMainWindow):
         valid_mapping_count = sum(
             1 for mapping in self.app_state.port_mappings if mapping.chain_id in valid_chain_ids
         )
-
         blockers: list[str] = []
-        warnings: list[str] = []
-        next_target = "subscriptions"
-
-        if not self.app_state.subscriptions and not self.app_state.nodes:
-            blockers.append("No nodes are available yet. Add a subscription or paste node URIs.")
-            next_target = "subscriptions"
-        elif not self.app_state.nodes:
-            blockers.append("Subscriptions exist, but no nodes were imported successfully.")
-            next_target = "subscriptions"
+        if not self.app_state.nodes:
+            blockers.append("No base nodes are available. Use Add to import a subscription or paste a share URI.")
         elif not valid_chain_ids:
-            blockers.append("No usable chains exist yet. Create a chain with at least one valid hop.")
-            next_target = "routing"
+            blockers.append("No usable chain nodes exist. Create a chain with at least one valid hop.")
         elif valid_mapping_count == 0:
-            blockers.append("No usable port mappings exist yet. Bind at least one local port to a valid chain.")
-            next_target = "routing"
+            blockers.append("No local proxy endpoint exists. Recreate the chain to allocate its local port.")
 
         if not exe_path or not os.path.isfile(exe_path):
-            blockers.append(
-                "The selected core executable was not found. Choose the current OS binary in Settings."
-            )
-            if next_target == "subscriptions":
-                next_target = "settings"
+            blockers.append("The selected core executable was not found. Choose it in Settings.")
 
         if self.app_state.enable_tun:
-            if not self.app_state.tun_chain_id:
-                blockers.append("TUN mode is enabled, but no chain is selected for it.")
-                next_target = "routing"
+            if self.app_state.tun_chain_id not in valid_chain_ids:
+                blockers.append("TUN is enabled, but the selected chain node is missing or invalid.")
             elif not self._is_admin():
-                blockers.append("TUN mode is enabled and requires administrator privileges before starting.")
-                if os.name == "nt":
-                    warnings.append("Restart ChainPort with 'Run as Admin' before starting TUN mode.")
-                else:
-                    warnings.append("Restart ChainPort with sudo before starting TUN mode.")
-                next_target = "routing"
+                required = "Run as Administrator" if os.name == "nt" else "restart ChainPort with sudo"
+                blockers.append(f"TUN requires elevated privileges; {required} before starting.")
 
-        if self.app_state.subscriptions == [] and self.app_state.nodes:
-            warnings.append("You are running only manual nodes. That is fine, but subscriptions remain empty.")
-
-        if self.app_state.enable_tun and self.app_state.tun_chain_id:
-            tun_chain = self.app_state.find_chain_by_id(self.app_state.tun_chain_id)
-            if tun_chain is None:
-                warnings.append("The TUN chain no longer exists and should be reselected.")
-
-        can_apply = bool(valid_mapping_count)
-        can_start = can_apply and bool(exe_path) and os.path.isfile(exe_path) and not (
-            self.app_state.enable_tun and not self._is_admin()
-        ) and not (
-            self.app_state.enable_tun and not self.app_state.tun_chain_id
-        )
+        can_start = not blockers
         title = "Ready" if can_start else "Action required"
-        detail = blockers[0] if blockers else ("Configuration looks ready." if not warnings else warnings[0])
+        detail = blockers[0] if blockers else "Configuration is ready."
         next_step = (
-            "Apply the config, then start the core."
+            "Start the core. Configuration is generated and validated automatically."
             if can_start
-            else "Open the highlighted page and resolve the remaining blockers."
+            else "Resolve the issue above, then choose Start again."
         )
         return {
             "title": title,
             "detail": detail,
             "next_step": next_step,
-            "blockers": blockers,
-            "warnings": warnings,
-            "next_target": next_target,
-            "can_apply": can_apply,
             "can_start": can_start,
-            "valid_mapping_count": valid_mapping_count,
         }
 
     def _refresh_action_state(self) -> None:
         preflight = self._get_preflight_state()
         is_running = self.process_runner.is_running()
-        self.btn_apply.setEnabled(bool(preflight["can_apply"]) and not is_running)
         self.btn_start.setEnabled(bool(preflight["can_start"]) and not is_running)
         self.btn_stop.setEnabled(is_running)
         self.btn_run_admin.setVisible(

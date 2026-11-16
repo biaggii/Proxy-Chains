@@ -1,12 +1,9 @@
 """
 port_mapping.py — 端口映射（PortMapping）的資料結構
 
-一個「PortMapping」就是：
-  在本地開一個端口（listen_host:listen_port），
-  所有連到這個端口的流量，都走指定的 chain 出去。
-
-每個瀏覽器 profile 會設不同的本地代理端口，
-每個端口對應不同的 chain（= 不同的出口 IP）。
+Each chain gets one automatically allocated local mixed-proxy port.
+The mapping remains an internal adapter model; users no longer manage
+port rows or assignment strategies in the UI.
 """
 
 import uuid
@@ -75,16 +72,3 @@ class PortMapping:
             f"PortMapping({self.mapping_id}, "
             f"{self.listen_host}:{self.listen_port} -> chain={self.chain_id})"
         )
-
-
-def format_proxy_endpoints(port_mappings: list["PortMapping"], scheme: str) -> str:
-    """Format local port mappings as HTTP or SOCKS proxy URLs."""
-    if scheme not in {"http", "socks5"}:
-        raise ValueError(f"Unsupported proxy scheme: {scheme}")
-    endpoints = []
-    for mapping in port_mappings:
-        host = mapping.listen_host
-        if ":" in host and not host.startswith("["):
-            host = f"[{host}]"
-        endpoints.append(f"{scheme}://{host}:{mapping.listen_port}")
-    return "\n".join(endpoints)

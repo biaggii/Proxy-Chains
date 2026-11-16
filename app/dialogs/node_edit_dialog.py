@@ -1,14 +1,13 @@
 """
 Node editing dialog.
 
-Extracted from ``ui_pages_nodes.py`` so that the nodes page stays
-focused on table management and the dialog can be reused elsewhere.
+Used by the compact Base Nodes manager to edit imported proxy profiles.
 """
 
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
-    QLineEdit, QComboBox, QCheckBox, QMessageBox,
-    QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QDialog, QDialogButtonBox, QFormLayout,
+    QLineEdit, QComboBox, QCheckBox,
+    QScrollArea, QVBoxLayout, QWidget,
 )
 
 from models.node import Node
@@ -102,54 +101,17 @@ class NodeEditDialog(QDialog):
         scroll.setWidget(form_widget)
         main_layout.addWidget(scroll)
 
-        # Buttons: Add (keep open) + OK (close) + Cancel
-        btn_row = QHBoxLayout()
-        self.btn_add = QPushButton("➕ Add")
-        self.btn_add.setToolTip(
-            "Add this node and keep the dialog open for the next one"
-        )
-        self.btn_add.clicked.connect(self._on_add_clicked)
-        btn_row.addWidget(self.btn_add)
-        btn_row.addStretch()
+        # One clear edit action: save or cancel.
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel
         )
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
-        btn_row.addWidget(self.buttons)
-        main_layout.addLayout(btn_row)
-
-        # Track nodes added via the Add button
-        self.added_nodes: list[Node] = []
+        main_layout.addWidget(self.buttons)
 
         # Initialise field visibility
         self._on_type_changed(self.combo_type.currentText())
-
-    # ── Add button ────────────────────────────────────
-
-    def _on_add_clicked(self) -> None:
-        """Save current fields as a new node and keep the dialog open."""
-        server = self.input_server.text().strip()
-        if not server:
-            QMessageBox.warning(self, "Error", "Server address cannot be empty!")
-            return
-        new_node = Node(
-            name=self.input_name.text().strip() or "New Node",
-            node_type=self.combo_type.currentText(),
-            server=server,
-            port=int(self.input_port.text().strip() or "0"),
-        )
-        orig_node = self.node
-        self.node = new_node
-        self.save_changes()
-        self.node = orig_node
-        self.added_nodes.append(new_node)
-        QMessageBox.information(
-            self,
-            "Added",
-            f"Node '{new_node.name}' added! You can modify fields and click Add again.",
-        )
 
     # ── Dynamic field visibility ──────────────────────
 

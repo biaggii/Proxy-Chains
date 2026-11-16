@@ -8,7 +8,8 @@ and the shared ``AppState`` wiring across the full desktop UI.
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTabWidget, QLabel, QMessageBox,
-    QSystemTrayIcon, QStyle, QMenu, QApplication, QDialog
+    QSystemTrayIcon, QStyle, QMenu, QApplication, QDialog,
+    QSpinBox,
 )
 from PySide6.QtGui import QIcon, QAction, QCloseEvent
 from PySide6.QtCore import Qt, Signal, Slot, QObject, QEvent, QTimer
@@ -18,7 +19,7 @@ from models.app_state import AppState
 from core.process_runner import ProcessRunner
 from app.ui_kit.feedback import set_feedback_banner
 
-from app.ui_pages_chains import ChainsPage
+from app.ui_pages_node_groups import NodeGroupsPage
 from app.ui_pages_logs import LogsPage
 from app.ui_pages_settings import SettingsPage
 
@@ -69,7 +70,9 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
 
-        self.page_chains = ChainsPage(self.app_state)
+        self.page_node_groups = NodeGroupsPage(self.app_state)
+        self.page_base_nodes = self.page_node_groups.base_page
+        self.page_chains = self.page_node_groups.chain_page
         self.page_settings = SettingsPage(self.app_state)
 
         self.logs_dialog = QDialog(self)
@@ -79,61 +82,77 @@ class MainWindow(QMainWindow):
         self.page_logs = LogsPage(self.logs_dialog)
         logs_layout.addWidget(self.page_logs)
 
-        self.tabs.addTab(self.page_chains, "Node Groups")
+        self.tabs.addTab(self.page_node_groups, "Node Groups")
         self.tabs.addTab(self.page_settings, "Settings")
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
-        main_layout.addWidget(self.tabs)
-
-        bottom_row = QHBoxLayout()
-
-        status_stack = QVBoxLayout()
-        self.lbl_status = QLabel("● Stopped")
-        self.lbl_status.setStyleSheet("color: gray; font-weight: bold; font-size: 14px;")
-        self.lbl_preflight = QLabel("Waiting for configuration data")
-        self.lbl_preflight.setWordWrap(True)
-        self.lbl_context = QLabel("")
-        self.lbl_context.setStyleSheet("color: #64748b;")
-        status_stack.addWidget(self.lbl_status)
-        status_stack.addWidget(self.lbl_preflight)
-        status_stack.addWidget(self.lbl_context)
-        bottom_row.addLayout(status_stack)
-
-        bottom_row.addStretch()
+        # Keep global runtime controls on the same top row as Node Groups / Settings.
+        top_controls = QWidget(self.tabs)
+        controls_layout = QHBoxLayout(top_controls)
+        controls_layout.setContentsMargins(8, 2, 8, 2)
+        controls_layout.setSpacing(8)
 
         self.btn_logs = QPushButton("Logs")
         self.btn_logs.clicked.connect(self.logs_dialog.show)
-        bottom_row.addWidget(self.btn_logs)
-        
+        controls_layout.addWidget(self.btn_logs)
+
+        self.lbl_status = QLabel("● Stopped")
+        self.lbl_status.setStyleSheet("color: gray; font-weight: bold; font-size: 14px;")
+        self.lbl_preflight = QLabel("Waiting for configuration data")
+        self.lbl_preflight.setToolTip("Core readiness / preflight status")
+        self.lbl_context = QLabel("")
+        self.lbl_context.setStyleSheet("color: #64748b;")
+        controls_layout.addWidget(self.lbl_status)
+        controls_layout.addWidget(self.lbl_preflight)
+
+        self.lbl_tun_binding = QLabel("TUN: Not bound")
+        self.lbl_tun_binding.setMinimumWidth(105)
+        self.lbl_tun_binding.setToolTip("The single node bound to the TUN outbound")
+        controls_layout.addWidget(self.lbl_tun_binding)
+
+        self.tun_switch = QPushButton("TUN OFF")
+        self.tun_switch.setObjectName("tunSwitch")
+        self.tun_switch.setCheckable(True)
+        self.tun_switch.setMinimumWidth(82)
+        self.tun_switch.toggled.connect(self._on_tun_toggled)
+        controls_layout.addWidget(self.tun_switch)
+
+        self.shared_port_label = QLabel("Shared Port")
+        self.shared_port = QSpinBox()
+        self.shared_port.setRange(1, 65535)
+        self.shared_port.setFixedWidth(88)
+        self.shared_port.setValue(self.app_state.base_node_listen_port)
+        self.shared_port.setToolTip("One shared local proxy port for the selected Base Node")
+        self.shared_port.editingFinished.connect(self._save_shared_port)
+        controls_layout.addWidget(self.shared_port_label)
+        controls_layout.addWidget(self.shared_port)
+
         self.btn_run_admin = QPushButton("Run as Admin")
-        self.btn_run_admin.setMinimumHeight(36)
+        self.btn_run_admin.setMinimumHeight(38)
         self.btn_run_admin.setStyleSheet("QPushButton { background-color: #f59e0b; color: #1f2937; font-weight: bold; }")
         self.btn_run_admin.clicked.connect(self._relaunch_as_admin)
-        
         # The UAC relaunch action is Windows-only. Linux has no ctypes.windll.
         if os.name != "nt" or self._is_admin():
             self.btn_run_admin.hide()
-            
-        bottom_row.addWidget(self.btn_run_admin)
-        self.btn_start = QPushButton("Start")
-        self.btn_start.setMinimumSize(112, 46)
-        self.btn_start.setStyleSheet("QPushButton { background-color: #2d7d46; color: white; font-weight: 600; }")
-        self.btn_start.clicked.connect(self._on_start)
-        bottom_row.addWidget(self.btn_start)
+        controls_layout.addWidget(self.btn_run_admin)
 
-        self.btn_stop = QPushButton("Stop")
-        self.btn_stop.setMinimumSize(112, 46)
-        self.btn_stop.setStyleSheet("QPushButton { background-color: #c0392b; color: white; font-weight: 600; }")
-        self.btn_stop.clicked.connect(self._on_stop)
-        bottom_row.addWidget(self.btn_stop)
+        self.btn_run = QPushButton("Start")
+        self.btn_run.setObjectName("runToggleButton")
+        self.btn_run.setMinimumSize(116, 40)
+        self.btn_run.setStyleSheet("QPushButton { background-color: #2d7d46; color: white; font-weight: 700; }")
+        self.btn_run.clicked.connect(self._on_run_clicked)
+        controls_layout.addWidget(self.btn_run)
 
-        main_layout.addLayout(bottom_row)
+        self.tabs.setCornerWidget(top_controls, Qt.Corner.TopRightCorner)
+        main_layout.addWidget(self.tabs)
 
         self.statusBar().showMessage("Workspace ready")
 
     def _connect_signals(self) -> None:
         """Connect cross-page signals and runtime callbacks."""
-        self.page_chains.data_changed.connect(self._on_data_changed)
+        self.page_node_groups.data_changed.connect(self._on_data_changed)
+        self.page_node_groups.active_node_changed.connect(self._on_active_base_node_changed)
+        self.page_node_groups.runtime_config_changed.connect(self._restart_running_core)
         self.page_settings.data_changed.connect(self._on_data_changed)
         self.log_bridge.log_signal.connect(self.page_logs.append_log)
         self.log_bridge.stopped_signal.connect(self._on_core_exited)
@@ -147,7 +166,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_all_pages(self) -> None:
         """Refresh every page from the latest state."""
-        self.page_chains.refresh()
+        self.page_node_groups.refresh()
         self.page_logs.refresh()
         self.page_settings.refresh()
         self._refresh_action_state()
@@ -225,6 +244,7 @@ class MainWindow(QMainWindow):
         """Exit the application after stopping the tracked core process."""
         if self.process_runner.is_running():
             self._on_stop()
+        self.page_base_nodes.shutdown_updates()
         self.app_state.save_to_file()
         self._force_closing = True
         QApplication.quit()
@@ -238,6 +258,7 @@ class MainWindow(QMainWindow):
         if not self.app_state.close_to_tray:
             if self.process_runner.is_running():
                 self._on_stop()
+            self.page_base_nodes.shutdown_updates()
             self.app_state.save_to_file()
             self._force_closing = True
             event.accept()
@@ -269,6 +290,26 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Auto-saved", 3000)
         self._refresh_all_pages()
 
+    @Slot(str)
+    def _on_active_base_node_changed(self, node_id: str) -> None:
+        """Reapply the shared base listener/TUN route when the selected node changes."""
+        self.app_state.save_to_file()
+        self.page_logs.append_log(
+            f"[Base] Active node: {node_id or 'None'}; shared port remains "
+            f"{self.app_state.base_node_listen_host}:{self.app_state.base_node_listen_port}."
+        )
+        if not self._restart_running_core():
+            self._refresh_all_pages()
+
+    @Slot()
+    def _restart_running_core(self) -> bool:
+        """Regenerate and restart a running core after its active routes change."""
+        if not self.process_runner.is_running():
+            return False
+        self._on_stop()
+        QTimer.singleShot(250, lambda: self._start_core(interactive=False))
+        return True
+
     @Slot(int)
     def _on_tab_changed(self, index: int) -> None:
         """Refresh the active page when the current tab changes."""
@@ -281,6 +322,71 @@ class MainWindow(QMainWindow):
     def _on_start(self) -> None:
         """Generate config files and start the selected core."""
         self._start_core(interactive=True)
+
+    @Slot()
+    def _on_run_clicked(self) -> None:
+        if self.process_runner.is_running():
+            self._on_stop()
+        else:
+            self._on_start()
+
+    @Slot(bool)
+    def _on_tun_toggled(self, checked: bool) -> None:
+        if checked and self.app_state.get_tun_node() is None:
+            QMessageBox.warning(
+                self, "Bind a node",
+                "Right-click a Base Node or an individual Chain hop and choose 'Bind TUN' first.",
+            )
+            self.tun_switch.blockSignals(True)
+            self.tun_switch.setChecked(False)
+            self.tun_switch.blockSignals(False)
+            return
+        if self.app_state.enable_tun == checked:
+            return
+        self.app_state.enable_tun = checked
+        self._on_data_changed()
+        self._restart_running_core()
+
+    def _save_shared_port(self) -> None:
+        port = self.shared_port.value()
+        if any(mapping.listen_port == port for mapping in self.app_state.port_mappings):
+            QMessageBox.warning(
+                self, "Port already in use",
+                "This port is already assigned to a Chain. Choose another port.",
+            )
+            self.shared_port.blockSignals(True)
+            self.shared_port.setValue(self.app_state.base_node_listen_port)
+            self.shared_port.blockSignals(False)
+            return
+        if port == self.app_state.base_node_listen_port:
+            return
+        self.app_state.base_node_listen_port = port
+        self.app_state.save_to_file()
+        self.page_base_nodes.refresh()
+        self.page_logs.append_log(
+            f"[Base] Shared local proxy port changed to "
+            f"{self.app_state.base_node_listen_host}:{port}."
+        )
+        self._refresh_action_state()
+        self._restart_running_core()
+
+    def _refresh_global_controls(self) -> None:
+        self.tun_switch.blockSignals(True)
+        self.tun_switch.setChecked(self.app_state.enable_tun)
+        self.tun_switch.setText("TUN ON" if self.app_state.enable_tun else "TUN OFF")
+        self.tun_switch.setStyleSheet(
+            "QPushButton { background-color: #1f4b99; color: white; font-weight: 700; }"
+            if self.app_state.enable_tun else ""
+        )
+        self.tun_switch.blockSignals(False)
+        bound = self.app_state.get_tun_node()
+        self.lbl_tun_binding.setText(f"TUN: {bound.name}" if bound else "TUN: Not bound")
+        self.lbl_tun_binding.setToolTip(
+            f"Bound node: {bound.name} ({bound.node_type})" if bound else "No node is bound to TUN"
+        )
+        self.shared_port.blockSignals(True)
+        self.shared_port.setValue(self.app_state.base_node_listen_port)
+        self.shared_port.blockSignals(False)
 
     @Slot()
     def _on_core_exited(self) -> None:
@@ -455,7 +561,7 @@ class MainWindow(QMainWindow):
         if key in {"settings"}:
             self.tabs.setCurrentWidget(self.page_settings)
             return
-        self.tabs.setCurrentWidget(self.page_chains)
+        self.tabs.setCurrentWidget(self.page_node_groups)
 
     def _is_admin(self) -> bool:
         if os.name == "nt":
@@ -481,19 +587,16 @@ class MainWindow(QMainWindow):
             1 for mapping in self.app_state.port_mappings if mapping.chain_id in valid_chain_ids
         )
         blockers: list[str] = []
-        if not self.app_state.nodes:
-            blockers.append("No base nodes are available. Use Add to import a subscription or paste a share URI.")
-        elif not valid_chain_ids:
-            blockers.append("No usable chain nodes exist. Create a chain with at least one valid hop.")
-        elif valid_mapping_count == 0:
-            blockers.append("No local proxy endpoint exists. Recreate the chain to allocate its local port.")
+        active_base_node = self.app_state.get_active_base_node()
+        if active_base_node is None and valid_mapping_count == 0:
+            blockers.append("No active Base Node or valid Chain endpoint is available.")
 
         if not exe_path or not os.path.isfile(exe_path):
             blockers.append("The selected core executable was not found. Choose it in Settings.")
 
         if self.app_state.enable_tun:
-            if self.app_state.tun_chain_id not in valid_chain_ids:
-                blockers.append("TUN is enabled, but the selected chain node is missing or invalid.")
+            if self.app_state.get_tun_node() is None:
+                blockers.append("TUN requires one node bound from the Base or Chain tab.")
             elif not self._is_admin():
                 required = "Run as Administrator" if os.name == "nt" else "restart ChainPort with sudo"
                 blockers.append(f"TUN requires elevated privileges; {required} before starting.")
@@ -516,10 +619,17 @@ class MainWindow(QMainWindow):
     def _refresh_action_state(self) -> None:
         preflight = self._get_preflight_state()
         is_running = self.process_runner.is_running()
-        self.btn_start.setEnabled(bool(preflight["can_start"]) and not is_running)
-        self.btn_stop.setEnabled(is_running)
+        self.btn_run.setText("Stop" if is_running else "Start")
+        self.btn_run.setStyleSheet(
+            "QPushButton { background-color: #c0392b; color: white; font-weight: 700; }"
+            if is_running else
+            "QPushButton { background-color: #2d7d46; color: white; font-weight: 700; }"
+        )
+        self.btn_run.setEnabled(is_running or bool(preflight["can_start"]))
         self.btn_run_admin.setVisible(
             os.name == "nt" and self.app_state.enable_tun and not self._is_admin()
         )
         self.lbl_preflight.setText(str(preflight["title"]))
+        self.lbl_preflight.setToolTip(str(preflight["detail"]))
         self.lbl_context.setText(f"{preflight['detail']} Next: {preflight['next_step']}")
+        self._refresh_global_controls()

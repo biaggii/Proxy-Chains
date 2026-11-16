@@ -5,7 +5,7 @@ test_singbox_adapter.py — 驗證 sing-box 配置生成的穩定性設定
 import json
 
 from core.singbox_adapter import SingBoxAdapter
-from models.app_state import AppState
+from models.app_state import AppState, TUN_NODE_CHAIN_ID
 from models.chain import Chain
 from models.node import Node, NODE_TYPE_SOCKS5, NODE_TYPE_VLESS, NODE_TYPE_WG
 from models.port_mapping import PortMapping
@@ -43,7 +43,8 @@ def test_tun_mode_uses_mixed_stack_and_matches_v2rayn_quic_policy(tmp_path) -> N
     """TUN mode uses mixed stack and blocks UDP/443 like the reference config."""
     app_state = _build_app_state(tmp_path)
     app_state.enable_tun = True
-    app_state.tun_chain_id = "chain1"
+    app_state.active_base_node_id = app_state.nodes[0].node_id
+    app_state.tun_node_id = app_state.nodes[0].node_id
 
     config = _generate_config(app_state)
 
@@ -76,20 +77,22 @@ def test_tun_dns_uses_doh_through_tun_chain_and_direct_bootstrap(tmp_path) -> No
     """TUN DNS uses DoH through its selected chain and direct bootstrap DNS."""
     app_state = _build_app_state(tmp_path)
     app_state.enable_tun = True
-    app_state.tun_chain_id = "chain1"
+    app_state.active_base_node_id = app_state.nodes[0].node_id
+    app_state.tun_node_id = app_state.nodes[0].node_id
 
     config = _generate_config(app_state)
     servers = {server["tag"]: server for server in config["dns"]["servers"]}
 
-    assert servers["remote_dns_chain1"]["type"] == "https"
-    assert servers["remote_dns_chain1"]["server"] == "cloudflare-dns.com"
-    assert servers["remote_dns_chain1"]["path"] == "/dns-query"
-    assert servers["remote_dns_chain1"]["detour"] == "CHAIN_chain1_H1"
+    tun_dns_tag = f"remote_dns_{TUN_NODE_CHAIN_ID}"
+    assert servers[tun_dns_tag]["type"] == "https"
+    assert servers[tun_dns_tag]["server"] == "cloudflare-dns.com"
+    assert servers[tun_dns_tag]["path"] == "/dns-query"
+    assert servers[tun_dns_tag]["detour"] == f"CHAIN_{TUN_NODE_CHAIN_ID}_H1"
     assert servers["direct_dns"]["type"] == "udp"
     assert servers["direct_dns"]["server"] == "119.29.29.29"
     assert any(
         rule.get("inbound") == ["IN_TUN"]
-        and rule.get("server") == "remote_dns_chain1"
+        and rule.get("server") == tun_dns_tag
         for rule in config["dns"]["rules"]
     )
     assert config["route"]["default_domain_resolver"]["server"] == "direct_dns"
@@ -99,7 +102,8 @@ def test_tun_routes_loopback_directly(tmp_path) -> None:
     """TUN 模式下，127.0.0.0/8 應直接放行，避免本機上游代理被誤導流。"""
     app_state = _build_app_state(tmp_path)
     app_state.enable_tun = True
-    app_state.tun_chain_id = "chain1"
+    app_state.active_base_node_id = app_state.nodes[0].node_id
+    app_state.tun_node_id = app_state.nodes[0].node_id
 
     config = _generate_config(app_state)
 

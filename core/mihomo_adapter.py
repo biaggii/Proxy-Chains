@@ -33,7 +33,7 @@ from typing import Any
 import yaml
 
 from core.core_adapter_base import CoreAdapterBase
-from models.app_state import AppState
+from models.app_state import AppState, BASE_NODE_CHAIN_ID, TUN_NODE_CHAIN_ID
 from models.node import Node, NODE_TYPE_VMESS, NODE_TYPE_VLESS, NODE_TYPE_TROJAN
 from models.node import NODE_TYPE_SS, NODE_TYPE_WG, NODE_TYPE_SOCKS5, NODE_TYPE_HTTP
 from models.port_mapping import PortMapping
@@ -63,11 +63,13 @@ class MihomoAdapter(CoreAdapterBase):
         chain_final_name_map: dict[str, str] = {}
 
         active_chain_ids = {pm.chain_id for pm in app_state.port_mappings}
-        if app_state.enable_tun and app_state.tun_chain_id:
-            active_chain_ids.add(app_state.tun_chain_id)
+        if app_state.get_active_base_node():
+            active_chain_ids.add(BASE_NODE_CHAIN_ID)
+        if app_state.enable_tun and app_state.get_tun_node():
+            active_chain_ids.add(TUN_NODE_CHAIN_ID)
 
         for cid in active_chain_ids:
-            chain = app_state.find_chain_by_id(cid)
+            chain = app_state.get_runtime_chain(cid)
             if chain is None:
                 continue
             if chain.chain_id in chain_final_name_map:
@@ -84,14 +86,11 @@ class MihomoAdapter(CoreAdapterBase):
             chain_final_name_map[chain.chain_id] = final_name
 
         # ---------- 2. listeners ----------
-        listeners_list = _build_mihomo_listeners(
-            app_state.port_mappings, chain_final_name_map
-        )
+        listeners_list = _build_mihomo_listeners(app_state.port_mappings, chain_final_name_map, app_state)
 
         # ---------- 3. 組裝 ----------
         full_config: dict[str, Any] = {
             "ipv6": app_state.enable_ipv6,
-            "mixed-port": 7890,       # 預設的全域 port（可能不會用到）
             "allow-lan": app_state.allow_lan,
             "mode": "rule",
             "log-level": app_state.log_level,
@@ -103,10 +102,7 @@ class MihomoAdapter(CoreAdapterBase):
             "proxies": proxies_list,
             "listeners": listeners_list,
         }
-        # Default catch-all rule
-        match_rule = "MATCH,DIRECT"
-        
-        if app_state.enable_tun and app_state.tun_chain_id:
+        if app_state.enable_tun and app_state.get_tun_node():
             full_config["tun"] = {
                 "enable": True,
                 "stack": "system",
@@ -122,7 +118,7 @@ class MihomoAdapter(CoreAdapterBase):
                 "python.exe", "pythonw.exe"
             ]
             
-            final_name = chain_final_name_map.get(app_state.tun_chain_id)
+            final_name = chain_final_name_map.get(TUN_NODE_CHAIN_ID)
             if final_name:
                 # Add DNS hijacking and local routing safety
                 full_config["rules"] = [
@@ -373,9 +369,19 @@ def _mihomo_add_transport(p: dict, node: Node) -> None:
 def _build_mihomo_listeners(
     port_mappings: list[PortMapping],
     chain_final_name_map: dict[str, str],
+    app_state: AppState,
 ) -> list[dict]:
-    """每個 PortMapping 對應一個 mixed listener，綁定到 chain 的最後一跳"""
+    """Create one shared base listener plus one independent listener per chain."""
     listeners: list[dict] = []
+    base_final_name = chain_final_name_map.get(BASE_NODE_CHAIN_ID)
+    if base_final_name and app_state.get_active_base_node():
+        listeners.append({
+            "name": "IN_BASE",
+            "type": "mixed",
+            "port": app_state.base_node_listen_port,
+            "listen": app_state.base_node_listen_host,
+            "proxy": base_final_name,
+        })
     for pm in port_mappings:
         final_name = chain_final_name_map.get(pm.chain_id)
         if final_name is None:

@@ -33,6 +33,10 @@ else:
 # Default path for state.json 
 DEFAULT_STATE_FILE = os.path.join(_base_dir, "state.json")
 LEGACY_CHAIN_NODE_TYPE = "chain"
+BASE_NODE_CHAIN_ID = "__base_node__"
+TUN_NODE_CHAIN_ID = "__tun_node__"
+BASE_NODE_LISTEN_HOST = "127.0.0.1"
+BASE_NODE_LISTEN_PORT = 10808
 
 
 class AppState:
@@ -49,6 +53,10 @@ class AppState:
         self.nodes: list[Node] = []
         self.chains: list[Chain] = []
         self.port_mappings: list[PortMapping] = []
+        self.active_base_node_id: str = ""
+        self.tun_node_id: str = ""
+        self.base_node_listen_host: str = BASE_NODE_LISTEN_HOST
+        self.base_node_listen_port: int = BASE_NODE_LISTEN_PORT
 
         # ---------- 設定 ----------
         self.core_type: str = "sing-box"         # sing-box / xray / mihomo
@@ -76,7 +84,6 @@ class AppState:
         
         # TUN 設定 (TUN Settings)
         self.enable_tun: bool = False
-        self.tun_chain_id: str = ""
         
         # 啟動設定 (Startup Settings)
         self.run_on_startup: bool = False
@@ -162,7 +169,6 @@ class AppState:
             "bootstrap_dns": self.bootstrap_dns,
             "singbox_mux_protocol": self.singbox_mux_protocol,
             "enable_tun": self.enable_tun,
-            "tun_chain_id": self.tun_chain_id,
             "run_on_startup": self.run_on_startup,
             "minimize_on_start": self.minimize_on_start,
             "auto_start_core": self.auto_start_core,
@@ -171,6 +177,10 @@ class AppState:
             "nodes": [n.to_dict() for n in self.nodes],
             "chains": [c.to_dict() for c in self.chains],
             "port_mappings": [m.to_dict() for m in self.port_mappings],
+            "active_base_node_id": self.active_base_node_id,
+            "tun_node_id": self.tun_node_id,
+            "base_node_listen_host": self.base_node_listen_host,
+            "base_node_listen_port": self.base_node_listen_port,
         }
 
         # 確保目錄存在
@@ -246,7 +256,7 @@ class AppState:
         self.bootstrap_dns = state_dict.get("bootstrap_dns", "119.29.29.29")
         self.singbox_mux_protocol = state_dict.get("singbox_mux_protocol", "h2mux")
         self.enable_tun = state_dict.get("enable_tun", False)
-        self.tun_chain_id = state_dict.get("tun_chain_id") or ""
+        legacy_tun_chain_id = state_dict.get("tun_chain_id") or ""
         self.run_on_startup = state_dict.get("run_on_startup", False)
         self.minimize_on_start = state_dict.get("minimize_on_start", False)
         self.auto_start_core = state_dict.get("auto_start_core", False)
@@ -264,6 +274,39 @@ class AppState:
             PortMapping.from_dict(d) for d in state_dict.get("port_mappings", [])
         ]
         self._migrate_legacy_chain_nodes()
+        has_active_base_node = "active_base_node_id" in state_dict
+        self.active_base_node_id = state_dict.get("active_base_node_id") or ""
+        self.tun_node_id = state_dict.get("tun_node_id") or ""
+        self.base_node_listen_host = state_dict.get("base_node_listen_host") or BASE_NODE_LISTEN_HOST
+        try:
+            self.base_node_listen_port = int(state_dict.get("base_node_listen_port") or BASE_NODE_LISTEN_PORT)
+        except (TypeError, ValueError):
+            self.base_node_listen_port = BASE_NODE_LISTEN_PORT
+        if not 1 <= self.base_node_listen_port <= 65535:
+            self.base_node_listen_port = BASE_NODE_LISTEN_PORT
+        if self.active_base_node_id and self.find_node_by_id(self.active_base_node_id) is None:
+            self.active_base_node_id = ""
+        # Older versions selected a whole chain for TUN. Migrate a one-hop
+        # chain directly; for a multi-hop chain use its final node as the
+        # closest equivalent to the new single-node TUN contract.
+        if self.enable_tun and not self.tun_node_id and legacy_tun_chain_id:
+            old_tun_chain = self.find_chain_by_id(legacy_tun_chain_id)
+            if old_tun_chain and old_tun_chain.hop_node_ids:
+                candidate_id = old_tun_chain.hop_node_ids[-1]
+                if self.find_node_by_id(candidate_id):
+                    self.tun_node_id = candidate_id
+                    if not has_active_base_node:
+                        self.active_base_node_id = candidate_id
+        if self.enable_tun and not self.tun_node_id:
+            self.tun_node_id = self.active_base_node_id
+        if self.tun_node_id and self.find_node_by_id(self.tun_node_id) is None:
+            self.tun_node_id = ""
+            self.enable_tun = False
+        if not self.active_base_node_id:
+            self.active_base_node_id = next(
+                (node.node_id for node in self.nodes if node.node_type != LEGACY_CHAIN_NODE_TYPE),
+                "",
+            )
         self._ensure_default_port_mappings()
 
     def _migrate_legacy_chain_nodes(self) -> None:
@@ -320,7 +363,7 @@ class AppState:
         chain_ids = {chain.chain_id for chain in self.chains}
         unique_mappings: list[PortMapping] = []
         mapped_chain_ids: set[str] = set()
-        used_ports: set[int] = set()
+        used_ports: set[int] = {self.base_node_listen_port}
         for mapping in self.port_mappings:
             if mapping.chain_id not in chain_ids or mapping.chain_id in mapped_chain_ids:
                 continue
@@ -355,3 +398,27 @@ class AppState:
                 return []
             result.append(node)
         return result
+
+    def get_active_base_node(self) -> Node | None:
+        """Return the one base node currently bound to the shared base port/TUN."""
+        if not self.active_base_node_id:
+            return None
+        node = self.find_node_by_id(self.active_base_node_id)
+        return node if node and node.node_type != LEGACY_CHAIN_NODE_TYPE else None
+
+    def get_tun_node(self) -> Node | None:
+        """Return the single Base Node or Chain hop bound to TUN."""
+        if not self.tun_node_id:
+            return None
+        node = self.find_node_by_id(self.tun_node_id)
+        return node if node and node.node_type != LEGACY_CHAIN_NODE_TYPE else None
+
+    def get_runtime_chain(self, chain_id: str) -> Chain | None:
+        """Resolve a persisted chain or the synthetic single-node base route."""
+        if chain_id == BASE_NODE_CHAIN_ID:
+            node = self.get_active_base_node()
+            return Chain("Active Base Node", [node.node_id], BASE_NODE_CHAIN_ID) if node else None
+        if chain_id == TUN_NODE_CHAIN_ID:
+            node = self.get_tun_node()
+            return Chain("TUN Node", [node.node_id], TUN_NODE_CHAIN_ID) if node else None
+        return self.find_chain_by_id(chain_id)

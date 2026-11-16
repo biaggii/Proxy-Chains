@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication
 
 from app.ui_main_window import MainWindow
 from models.app_state import AppState
+from models.node import Node
 
 
 def test_launch_actions_preserve_selected_tun_route(tmp_path: Path) -> None:
@@ -15,7 +16,9 @@ def test_launch_actions_preserve_selected_tun_route(tmp_path: Path) -> None:
     state = AppState(str(tmp_path / "state.json"))
     state.auto_start_core = True
     state.enable_tun = True
-    state.tun_chain_id = "chain-1"
+    node = Node("Selected", "socks5", "127.0.0.1", 1080)
+    state.nodes = [node]
+    state.active_base_node_id = node.node_id
 
     window = MainWindow(state)
     calls: list[bool] = []
@@ -28,7 +31,7 @@ def test_launch_actions_preserve_selected_tun_route(tmp_path: Path) -> None:
     window._run_launch_actions()
 
     assert state.enable_tun is True
-    assert state.tun_chain_id == "chain-1"
+    assert state.active_base_node_id == node.node_id
     assert calls == [False]
 
     window.close()

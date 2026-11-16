@@ -36,7 +36,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from core.core_adapter_base import CoreAdapterBase
-from models.app_state import AppState
+from models.app_state import AppState, BASE_NODE_CHAIN_ID, TUN_NODE_CHAIN_ID
 from models.node import Node, NODE_TYPE_VMESS, NODE_TYPE_VLESS, NODE_TYPE_TROJAN
 from models.node import NODE_TYPE_SS, NODE_TYPE_WG, NODE_TYPE_SOCKS5, NODE_TYPE_HTTP
 from models.chain import Chain
@@ -73,12 +73,13 @@ class SingBoxAdapter(CoreAdapterBase):
         chain_final_tag_map: dict[str, str] = {}
 
         active_chain_ids = list(dict.fromkeys(pm.chain_id for pm in app_state.port_mappings))
-        if app_state.enable_tun and app_state.tun_chain_id:
-            if app_state.tun_chain_id not in active_chain_ids:
-                active_chain_ids.append(app_state.tun_chain_id)
+        if app_state.get_active_base_node():
+            active_chain_ids.append(BASE_NODE_CHAIN_ID)
+        if app_state.enable_tun and app_state.get_tun_node():
+            active_chain_ids.append(TUN_NODE_CHAIN_ID)
 
         for cid in active_chain_ids:
-            chain = app_state.find_chain_by_id(cid)
+            chain = app_state.get_runtime_chain(cid)
             if chain is None:
                 continue
             # 如果這條 chain 已經處理過了，跳過
@@ -172,7 +173,7 @@ class SingBoxAdapter(CoreAdapterBase):
             "route": {
                 "rules": route_rules,
                 "auto_detect_interface": True if app_state.enable_tun else False,
-                "final": chain_final_tag_map.get(app_state.tun_chain_id, "DIRECT") if app_state.enable_tun else "DIRECT",
+                "final": chain_final_tag_map.get(TUN_NODE_CHAIN_ID, "DIRECT") if app_state.enable_tun else "DIRECT",
                 "default_domain_resolver": {
                     "server": "direct_dns",
                     "strategy": "ipv4_only" if not app_state.enable_ipv6 else "prefer_ipv4",
@@ -205,7 +206,7 @@ def _build_inbounds(port_mappings: list[PortMapping], app_state: AppState) -> li
     """
     inbounds: list[dict] = []
     
-    if app_state.enable_tun and app_state.tun_chain_id:
+    if app_state.enable_tun and app_state.get_tun_node():
         tun_inbound: dict[str, Any] = {
             "type": "tun",
             "tag": "IN_TUN",
@@ -218,6 +219,14 @@ def _build_inbounds(port_mappings: list[PortMapping], app_state: AppState) -> li
             "stack": "mixed",
         }
         inbounds.append(tun_inbound)
+
+    if app_state.get_active_base_node():
+        inbounds.append({
+            "type": "mixed",
+            "tag": "IN_BASE",
+            "listen": app_state.base_node_listen_host,
+            "listen_port": app_state.base_node_listen_port,
+        })
 
     for pm in port_mappings:
         inbound_dict: dict = {
@@ -302,6 +311,14 @@ def _build_dns_config(
         servers.append(remote_server)
         remote_tag_by_chain[chain_id] = remote_tag
 
+    base_remote_tag = remote_tag_by_chain.get(BASE_NODE_CHAIN_ID)
+    if base_remote_tag and app_state.get_active_base_node():
+        rules.append({
+            "inbound": ["IN_BASE"],
+            "action": "route",
+            "server": base_remote_tag,
+        })
+
     for mapping in app_state.port_mappings:
         remote_tag = remote_tag_by_chain.get(mapping.chain_id)
         if remote_tag:
@@ -312,17 +329,19 @@ def _build_dns_config(
             })
 
     default_chain_id = ""
-    if app_state.enable_tun and app_state.tun_chain_id in remote_tag_by_chain:
-        default_chain_id = app_state.tun_chain_id
+    if app_state.enable_tun and BASE_NODE_CHAIN_ID in remote_tag_by_chain:
+        default_chain_id = BASE_NODE_CHAIN_ID
+    elif BASE_NODE_CHAIN_ID in remote_tag_by_chain:
+        default_chain_id = BASE_NODE_CHAIN_ID
     elif app_state.port_mappings:
         default_chain_id = app_state.port_mappings[0].chain_id
 
     default_remote_tag = remote_tag_by_chain.get(default_chain_id, "direct_dns")
-    if app_state.enable_tun and app_state.tun_chain_id in remote_tag_by_chain:
+    if app_state.enable_tun and TUN_NODE_CHAIN_ID in remote_tag_by_chain:
         rules.append({
             "inbound": ["IN_TUN"],
             "action": "route",
-            "server": remote_tag_by_chain[app_state.tun_chain_id],
+            "server": remote_tag_by_chain[TUN_NODE_CHAIN_ID],
         })
 
     return {
@@ -711,14 +730,20 @@ def _build_route_rules(
     """
     rules: list[dict] = []
     
-    if app_state.enable_tun and app_state.tun_chain_id:
-        final_tag = chain_final_tag_map.get(app_state.tun_chain_id)
+    if app_state.enable_tun and TUN_NODE_CHAIN_ID in chain_final_tag_map:
+        final_tag = chain_final_tag_map.get(TUN_NODE_CHAIN_ID)
         if final_tag:
             rules.append({
                 "inbound": ["IN_TUN"],
                 "outbound": final_tag,
             })
             
+    if app_state.get_active_base_node():
+        rules.append({
+            "inbound": ["IN_BASE"],
+            "outbound": chain_final_tag_map[BASE_NODE_CHAIN_ID],
+        })
+
     for pm in port_mappings:
         final_tag = chain_final_tag_map.get(pm.chain_id)
         if final_tag is None:

@@ -71,3 +71,20 @@ def test_each_chain_gets_one_default_local_port(tmp_path: Path) -> None:
     }
     assert len(loaded.port_mappings) == 2
     assert len({item.listen_port for item in loaded.port_mappings}) == 2
+    assert all(item.listen_port != loaded.base_node_listen_port for item in loaded.port_mappings)
+
+
+def test_legacy_chain_port_collision_with_shared_base_port_is_migrated(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state = AppState(str(state_path))
+    node = Node("Exit", NODE_TYPE_SOCKS5, "127.0.0.1", 1080)
+    chain = Chain("Legacy", [node.node_id])
+    state.nodes = [node]
+    state.chains = [chain]
+    state.port_mappings = [PortMapping(10808, chain.chain_id)]
+    state.save_to_file()
+
+    loaded = AppState(str(state_path))
+    loaded.load_from_file()
+    assert len(loaded.port_mappings) == 1
+    assert loaded.port_mappings[0].listen_port != loaded.base_node_listen_port

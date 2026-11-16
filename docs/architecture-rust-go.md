@@ -56,12 +56,32 @@ The simplified product should expose exactly two primary navigation items:
 
 ### 1. Node Groups
 
-The main workspace is one chain-node list with four actions:
+The main workspace has two subtabs:
+
+#### Base
+
+- v2rayN-style list of all imported/manual single-hop nodes, with source-group filter.
+- Subscription sources appear as subtabs: `ALL`, `Customs`, and the subscription name itself (no `sub-` prefix).
+- The global toolbar is in the QTabWidget top-right corner and remains visible on both Node Groups and Settings: Logs, runtime/readiness status, TUN binding name, TUN switch, editable shared Base port, and one Run button toggling Start/Stop.
+- A **Subscriptions…** manager opens the v2rayN-style subscription group list with Add, Delete, Edit, Share, Update, Update All, and Close. Right-click an individual group tab for Edit or Remove; no duplicate group buttons sit beside the tabs.
+- Add/Edit subscription exposes the v2rayN fields: optional URL, source format, enable update, automatic interval, remarks regex, convert target type, User-Agent, JSON headers, sort, previous/next proxy remarks and profile selectors, custom core, custom SOCKS port, and remarks memo.
+- Subscription updates run in background threads. Auto-update checks enabled subscriptions every 30 seconds and runs only when the configured interval is greater than zero. Matching node identities retain their IDs; removed nodes remain marked stale if a Chain, active Base selection, or TUN still references them.
+- Base table context menu contains Edit, Remove, Bind TUN, active-node selection, and manual import/create; no duplicate Edit/Remove buttons appear below the table.
+- Chain Create is at the right end of the chain summary row. Chain Edit and Remove are in the row context menu; no duplicate buttons appear below the table.
+- Node Groups inner Base/Chain tab content has 18/14/18/18 px outer padding and a borderless pane so it does not collide with the top-level tab separator.
+- Add imports v2rayN or Clash-compatible subscriptions, share URIs, or manual profiles.
+- Edit / Remove individual Base Nodes.
+- One selected Base Node is served on a shared local proxy endpoint (default `127.0.0.1:10808`); its port is displayed and editable at the right end of the Base action row. Selecting another row changes the active outbound behind the same port; if the core is running, regenerate, validate, and restart it.
+- One shared TUN switch is above the Base / Chain subtabs. Right-click any Base Node or individual Chain hop and choose **Bind TUN**. Exactly one node ID is bound at a time; a new binding replaces the old one and the UI marks the bound node in the list and shows its name. TUN is not a local proxy port.
+
+#### Chain
 
 - **Create:** open a composer to name a route and select/reorder base-node hops.
-- **Add:** import a v2rayN or Clash-compatible subscription, paste a share URI, or manage existing base nodes.
-- **Edit / Remove:** update or delete the selected chain route.
-- A single TUN switch routes system traffic through the currently selected chain.
+- **Edit:** reopen the same composer to add, remove, or reorder hops in an existing route.
+- **Remove:** delete the selected route.
+- Each Chain gets one independent local proxy port, automatically allocated from `20001` upward.
+
+With one active Base Node and N Chains, the local proxy listener count is N + 1. TUN adds a virtual interface, not another local listener.
 
 Each saved `Chain` is the chain node. Do not store a second `Node(type=chain)` wrapper for the same route. Allocate a local mixed-proxy port automatically for each chain.
 
@@ -80,7 +100,7 @@ Subscriptions should be managed inside Node Groups, not as a separate top-level 
 Keep runtime and platform controls in one place:
 
 - Core engine and executable path
-- Automatic local mixed-proxy port allocation
+- One shared Base Node listener plus one automatic local listener per Chain
 - DNS provider and bootstrap resolver
 - TLS fragmentation and QUIC policy
 - Startup behaviour and platform integration

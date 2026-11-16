@@ -2,15 +2,16 @@
 xray_adapter.py — Xray 核心的配置生成器
 
 完整支援：
-  - 多端口（每個 PortMapping 一個 socks inbound）
-  - 多跳鏈（用 proxySettings.tag 串接 hop outbound）
+  - 單一共享 Base Node SOCKS inbound
+  - 多端口（每個 Chain PortMapping 一個 socks inbound）
+  - 多跳鏈（用 streamSettings.sockopt.dialerProxy 串接 hop outbound）
   - 路由規則（每個 inbound tag 導到對應的 chain 最後一跳）
 
 Xray 鏈式原理：
   chain hops: [A, B, C]
   H1 = clone(A)                                          → 直連到 A
-  H2 = clone(B) + proxySettings: { tag: "H1" }          → B 透過 A 出去
-  H3 = clone(C) + proxySettings: { tag: "H2" }          → C 透過 B 出去
+  H2 = clone(B) + sockopt.dialerProxy: "H1"             → B 透過 A 出去
+  H3 = clone(C) + sockopt.dialerProxy: "H2"             → C 透過 B 出去
 
 Xray 配置結構：
 {
@@ -33,7 +34,7 @@ import os
 from typing import Any
 
 from core.core_adapter_base import CoreAdapterBase
-from models.app_state import AppState
+from models.app_state import AppState, BASE_NODE_CHAIN_ID, TUN_NODE_CHAIN_ID
 from models.node import Node, NODE_TYPE_VMESS, NODE_TYPE_VLESS, NODE_TYPE_TROJAN
 from models.node import NODE_TYPE_SS, NODE_TYPE_WG, NODE_TYPE_SOCKS5, NODE_TYPE_HTTP
 from models.chain import Chain
@@ -66,11 +67,13 @@ class XrayAdapter(CoreAdapterBase):
         chain_final_tag_map: dict[str, str] = {}
 
         active_chain_ids = {pm.chain_id for pm in app_state.port_mappings}
-        if app_state.enable_tun and app_state.tun_chain_id:
-            active_chain_ids.add(app_state.tun_chain_id)
+        if app_state.get_active_base_node():
+            active_chain_ids.add(BASE_NODE_CHAIN_ID)
+        if app_state.enable_tun and app_state.get_tun_node():
+            active_chain_ids.add(TUN_NODE_CHAIN_ID)
 
         for cid in active_chain_ids:
-            chain = app_state.find_chain_by_id(cid)
+            chain = app_state.get_runtime_chain(cid)
             if chain is None:
                 continue
             if chain.chain_id in chain_final_tag_map:
@@ -102,7 +105,9 @@ class XrayAdapter(CoreAdapterBase):
         # 預防 TUN 迴圈：排除核心程序與本地流量
         routing_rules.insert(0, {
             "type": "field",
-            "domain": ["regexp:^localhost$", "geosite:private"],
+            # Keep the bundled Xray standalone; geosite:private requires an
+            # external geosite.dat that is not shipped with the core binary.
+            "domain": ["regexp:^localhost$"],
             "outboundTag": "DIRECT"
         })
         routing_rules.insert(0, {
@@ -154,7 +159,7 @@ def _build_xray_inbounds(port_mappings: list[PortMapping], app_state: AppState) 
     """每個 PortMapping 對應一個 socks inbound"""
     inbounds: list[dict] = []
     
-    if app_state.enable_tun and app_state.tun_chain_id:
+    if app_state.enable_tun and app_state.get_tun_node():
         inbounds.append({
             "tag": "IN_TUN",
             "port": 0,
@@ -164,6 +169,19 @@ def _build_xray_inbounds(port_mappings: list[PortMapping], app_state: AppState) 
                 "autoRoute": True,
                 "strictRoute": True
             }
+        })
+
+    if app_state.get_active_base_node():
+        inbounds.append({
+            "protocol": "socks",
+            "tag": "IN_BASE",
+            "listen": app_state.base_node_listen_host,
+            "port": app_state.base_node_listen_port,
+            "settings": {"auth": "noauth", "udp": app_state.enable_udp},
+            "sniffing": {
+                "enabled": app_state.enable_sniffing,
+                "destOverride": ["http", "tls"],
+            },
         })
         
     for pm in port_mappings:
@@ -195,7 +213,7 @@ def _build_xray_chain_outbounds(
     app_state: AppState,
 ) -> tuple[list[dict], str]:
     """
-    Xray 的鏈式用 proxySettings.tag 串接：
+    Xray 26.9.9+ uses streamSettings.sockopt.dialerProxy:
       H1 = A（直連）
       H2 = B + proxySettings.tag = H1
       H3 = C + proxySettings.tag = H2
@@ -208,10 +226,13 @@ def _build_xray_chain_outbounds(
 
         outbound = _node_to_xray_outbound(node, tag, app_state)
 
-        # 第 2 跳開始加 proxySettings
+        # Xray 26.9.9+ removed outbound.proxySettings. Chain through the
+        # underlying socket dialer instead so the hop's TLS/transport remains
+        # active while its TCP connection is established through the previous hop.
         if hop_index > 0:
             prev_tag = f"CHAIN_{chain_id}_H{hop_number - 1}"
-            outbound["proxySettings"] = {"tag": prev_tag}
+            stream_settings = outbound.setdefault("streamSettings", {"network": "tcp"})
+            stream_settings.setdefault("sockopt", {})["dialerProxy"] = prev_tag
 
         hop_outbounds.append(outbound)
 
@@ -463,14 +484,22 @@ def _build_xray_routing(
     """每個 PortMapping → 一條路由規則"""
     rules: list[dict] = []
     
-    if app_state.enable_tun and app_state.tun_chain_id:
-        final_tag = chain_final_tag_map.get(app_state.tun_chain_id)
+    if app_state.enable_tun and TUN_NODE_CHAIN_ID in chain_final_tag_map:
+        final_tag = chain_final_tag_map.get(TUN_NODE_CHAIN_ID)
         if final_tag:
             rules.append({
                 "type": "field",
                 "inboundTag": ["IN_TUN"],
                 "outboundTag": final_tag,
             })
+
+    base_final_tag = chain_final_tag_map.get(BASE_NODE_CHAIN_ID)
+    if base_final_tag:
+        rules.append({
+            "type": "field",
+            "inboundTag": ["IN_BASE"],
+            "outboundTag": base_final_tag,
+        })
             
     for pm in port_mappings:
         final_tag = chain_final_tag_map.get(pm.chain_id)

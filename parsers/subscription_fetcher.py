@@ -13,6 +13,7 @@ subscription_fetcher.py — 訂閱下載與解析的統一入口
 from datetime import datetime, timezone, timedelta
 
 import requests
+import re
 
 from models.node import Node
 from models.subscription import (
@@ -32,19 +33,21 @@ from parsers.v2rayn_parser import parse_v2rayn_subscription
 def download_subscription_text(
     url: str,
     timeout_seconds: int = 30,
+    user_agent: str = "",
+    headers: dict | None = None,
 ) -> str:
     """
     用 requests 下載訂閱 URL，回傳原始文字內容。
     失敗會拋出 ConnectionError 或 TimeoutError，附帶清楚的訊息。
     """
     try:
+        request_headers = {"User-Agent": user_agent.strip() or "ClashForWindows/0.20.30"}
+        if headers:
+            request_headers.update({str(key): str(value) for key, value in headers.items()})
         response = requests.get(
             url,
             timeout=timeout_seconds,
-            headers={
-                # 模擬 Clash Verge 的 User-Agent，讓機場回傳正確格式
-                "User-Agent": "ClashForWindows/0.20.30",
-            },
+            headers=request_headers,
         )
         response.raise_for_status()
         return response.text
@@ -121,7 +124,11 @@ def fetch_and_parse(
 
     # --- 第 1 步：下載 ---
     try:
-        raw_text = download_subscription_text(sub_url)
+        raw_text = download_subscription_text(
+            sub_url,
+            user_agent=subscription.user_agent,
+            headers=subscription.http_headers,
+        )
     except Exception as err:
         return [], [f"Subscription '{sub_name}' download failed: {err}"]
 
@@ -137,6 +144,13 @@ def fetch_and_parse(
     else:
         node_list = []
         error_list = [f"Subscription '{sub_name}' has unsupported type '{sub_type}'"]
+
+    if subscription.remarks_filter:
+        try:
+            matcher = re.compile(subscription.remarks_filter, re.IGNORECASE)
+            node_list = [node for node in node_list if matcher.search(node.name or "")]
+        except re.error as err:
+            return [], [f"Invalid remarks regular expression: {err}"]
 
     # --- 第 4 步：更新訂閱的 metadata ---
     # 取得台北時間 (UTC+8)

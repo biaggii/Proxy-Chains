@@ -1,5 +1,7 @@
 # Task Plan - Cross-Repo Improvement Study
 
+> **ARCHIVED / COMPLETED:** This plan records the earlier 2026-04-28 repository study. The current source-verified rewrite assessment is [`docs/GO-WAILS3-REWRITE-PLAN.md`](docs/GO-WAILS3-REWRITE-PLAN.md).
+
 ## Goal
 1. Build fresh graph-based view of current `Sing-chain` repo.
 2. Compare architecture and UX patterns against `Refer Projects/clash-verge-rev` and `Refer Projects/v2rayn`.

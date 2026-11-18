@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
 
         self.lbl_tun_binding = QLabel("TUN: Not bound")
         self.lbl_tun_binding.setMinimumWidth(105)
-        self.lbl_tun_binding.setToolTip("The single node bound to the TUN outbound")
+        self.lbl_tun_binding.setToolTip("The single Base Node or complete Chain bound to the TUN outbound")
         controls_layout.addWidget(self.lbl_tun_binding)
 
         self.tun_switch = QPushButton("TUN OFF")
@@ -332,10 +332,10 @@ class MainWindow(QMainWindow):
 
     @Slot(bool)
     def _on_tun_toggled(self, checked: bool) -> None:
-        if checked and self.app_state.get_tun_node() is None:
+        if checked and self.app_state.get_tun_chain() is None:
             QMessageBox.warning(
                 self, "Bind a node",
-                "Right-click a Base Node or an individual Chain hop and choose 'Bind TUN' first.",
+                "Right-click a Base Node or a Chain and choose its TUN binding first.",
             )
             self.tun_switch.blockSignals(True)
             self.tun_switch.setChecked(False)
@@ -379,10 +379,14 @@ class MainWindow(QMainWindow):
             if self.app_state.enable_tun else ""
         )
         self.tun_switch.blockSignals(False)
-        bound = self.app_state.get_tun_node()
-        self.lbl_tun_binding.setText(f"TUN: {bound.name}" if bound else "TUN: Not bound")
+        binding_name = self.app_state.get_tun_binding_name()
+        self.lbl_tun_binding.setText(f"TUN: {binding_name}")
         self.lbl_tun_binding.setToolTip(
-            f"Bound node: {bound.name} ({bound.node_type})" if bound else "No node is bound to TUN"
+            f"Bound chain: {binding_name[7:]} (all hops preserved)"
+            if self.app_state.tun_chain_id
+            else f"Bound Base Node: {binding_name}"
+            if self.app_state.get_tun_node()
+            else "No node or chain is bound to TUN"
         )
         self.shared_port.blockSignals(True)
         self.shared_port.setValue(self.app_state.base_node_listen_port)
@@ -496,14 +500,13 @@ class MainWindow(QMainWindow):
         if not started:
             self._update_status(False)
             self.statusBar().showMessage("Core Start Failed", 3000)
-            self._open_tab("logs")
             if interactive:
                 QMessageBox.warning(
                     self,
                     "Start Failed",
-                    "Core process failed to start. Check the Logs tab for details.",
+                    "Core process failed to start. Open Logs for details.",
                 )
-                self._show_banner("Core process failed to start. Check the Logs tab for details.", "error")
+                self._show_banner("Core process failed to start. Open Logs for details.", "error")
             else:
                 self._notify_launch_issue("Auto-start failed. Check the Logs tab for details.", "error")
             return False
@@ -511,9 +514,7 @@ class MainWindow(QMainWindow):
         self._update_status(True)
         self.statusBar().showMessage("Core Started", 3000)
         self._show_banner("Core started successfully. Live output is available in Logs.", "success")
-        if interactive:
-            self._open_tab("logs")
-        else:
+        if not interactive:
             self.page_logs.append_log("[Launch] Core started automatically on app launch.")
             if self.tray_icon.isVisible() and not self.isVisible():
                 self.tray_icon.showMessage(
@@ -595,8 +596,8 @@ class MainWindow(QMainWindow):
             blockers.append("The selected core executable was not found. Choose it in Settings.")
 
         if self.app_state.enable_tun:
-            if self.app_state.get_tun_node() is None:
-                blockers.append("TUN requires one node bound from the Base or Chain tab.")
+            if self.app_state.get_tun_chain() is None:
+                blockers.append("TUN requires a Base Node or a complete Chain to be bound.")
             elif not self._is_admin():
                 required = "Run as Administrator" if os.name == "nt" else "restart ChainPort with sudo"
                 blockers.append(f"TUN requires elevated privileges; {required} before starting.")

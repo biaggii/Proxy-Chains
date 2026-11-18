@@ -75,7 +75,7 @@ class SingBoxAdapter(CoreAdapterBase):
         active_chain_ids = list(dict.fromkeys(pm.chain_id for pm in app_state.port_mappings))
         if app_state.get_active_base_node():
             active_chain_ids.append(BASE_NODE_CHAIN_ID)
-        if app_state.enable_tun and app_state.get_tun_node():
+        if app_state.enable_tun and app_state.get_tun_chain():
             active_chain_ids.append(TUN_NODE_CHAIN_ID)
 
         for cid in active_chain_ids:
@@ -206,7 +206,7 @@ def _build_inbounds(port_mappings: list[PortMapping], app_state: AppState) -> li
     """
     inbounds: list[dict] = []
     
-    if app_state.enable_tun and app_state.get_tun_node():
+    if app_state.enable_tun and app_state.get_tun_chain():
         tun_inbound: dict[str, Any] = {
             "type": "tun",
             "tag": "IN_TUN",

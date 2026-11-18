@@ -1,4 +1,5 @@
 # Task Board
+> **ARCHIVED / HISTORICAL:** This board records the first implementation pass and references obsolete page names. See [`docs/GO-WAILS3-REWRITE-PLAN.md`](docs/GO-WAILS3-REWRITE-PLAN.md) for current status and next phases.
 ## TODO
 (None)
 

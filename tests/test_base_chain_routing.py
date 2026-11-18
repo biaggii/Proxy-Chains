@@ -54,7 +54,7 @@ def test_singbox_has_one_base_port_plus_one_port_per_chain_and_single_node_tun(t
     assert config["route"]["final"] == tun_tag
 
 
-def test_tun_can_bind_one_chain_hop_different_from_active_base_node(tmp_path):
+def test_tun_can_bind_a_different_base_node_from_the_active_base_node(tmp_path):
     state = _state(tmp_path, tun=True)
     state.tun_node_id = state.nodes[2].node_id
     text, _ = SingBoxAdapter().generate_config(state)
@@ -266,7 +266,7 @@ def test_base_only_mode_has_one_shared_port_and_tun_adds_no_proxy_port(tmp_path)
         assert not any(item["tag"].startswith("IN_200") for item in config["inbounds"])
 
 
-def test_legacy_chain_tun_setting_migrates_to_one_base_node(tmp_path):
+def test_legacy_chain_tun_setting_preserves_the_complete_chain(tmp_path):
     state_path = tmp_path / "legacy.json"
     state = _state(tmp_path)
     state.state_file_path = str(state_path)
@@ -281,6 +281,50 @@ def test_legacy_chain_tun_setting_migrates_to_one_base_node(tmp_path):
     loaded.load_from_file()
 
     assert loaded.enable_tun is True
-    assert loaded.active_base_node_id == state.nodes[2].node_id
-    assert loaded.get_active_base_node().name == "Chain exit"
-    assert not hasattr(loaded, "tun_chain_id")
+    assert loaded.active_base_node_id == state.nodes[0].node_id
+    assert loaded.get_active_base_node().name == "Base exit"
+    assert loaded.tun_chain_id == state.chains[1].chain_id
+    assert loaded.tun_node_id == ""
+    assert loaded.get_runtime_chain(TUN_NODE_CHAIN_ID).hop_node_ids == state.chains[1].hop_node_ids
+
+
+def test_tun_binding_a_chain_preserves_all_hops_in_every_core(tmp_path):
+    state = _state(tmp_path, tun=True)
+    selected_chain = state.chains[1]
+    state.tun_node_id = ""
+    state.tun_chain_id = selected_chain.chain_id
+    expected_hops = list(selected_chain.hop_node_ids)
+
+    assert state.get_runtime_chain(TUN_NODE_CHAIN_ID).hop_node_ids == expected_hops
+
+    singbox_text, _ = SingBoxAdapter().generate_config(state)
+    singbox = json.loads(singbox_text)
+    sb_first = f"CHAIN_{TUN_NODE_CHAIN_ID}_H1"
+    sb_second = f"CHAIN_{TUN_NODE_CHAIN_ID}_H2"
+    sb_outbounds = {item["tag"]: item for item in singbox["outbounds"]}
+    assert sb_outbounds[sb_first]["server"] == state.nodes[1].server
+    assert sb_outbounds[sb_second]["server"] == state.nodes[2].server
+    assert sb_outbounds[sb_second]["detour"] == sb_first
+    sb_tun_rule = next(rule for rule in singbox["route"]["rules"] if rule.get("inbound") == ["IN_TUN"])
+    assert sb_tun_rule["outbound"] == sb_second
+
+    xray_text, _ = XrayAdapter().generate_config(state)
+    xray = json.loads(xray_text)
+    xr_first = f"CHAIN_{TUN_NODE_CHAIN_ID}_H1"
+    xr_second = f"CHAIN_{TUN_NODE_CHAIN_ID}_H2"
+    xr_outbounds = {item["tag"]: item for item in xray["outbounds"]}
+    assert xr_outbounds[xr_first]["settings"]["servers"][0]["address"] == state.nodes[1].server
+    assert xr_outbounds[xr_second]["settings"]["servers"][0]["address"] == state.nodes[2].server
+    assert xr_outbounds[xr_second]["streamSettings"]["sockopt"]["dialerProxy"] == xr_first
+    xr_tun_rule = next(rule for rule in xray["routing"]["rules"] if rule.get("inboundTag") == ["IN_TUN"])
+    assert xr_tun_rule["outboundTag"] == xr_second
+
+    mihomo_text, _ = MihomoAdapter().generate_config(state)
+    mihomo = yaml.safe_load(mihomo_text)
+    mh_first = f"CHAIN_{TUN_NODE_CHAIN_ID}_H1"
+    mh_second = f"CHAIN_{TUN_NODE_CHAIN_ID}_H2"
+    mh_proxies = {item["name"]: item for item in mihomo["proxies"]}
+    assert mh_proxies[mh_first]["server"] == state.nodes[1].server
+    assert mh_proxies[mh_second]["server"] == state.nodes[2].server
+    assert mh_proxies[mh_second]["dialer-proxy"] == mh_first
+    assert mihomo["rules"][-1] == f"MATCH,{mh_second}"

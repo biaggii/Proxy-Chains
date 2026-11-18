@@ -47,7 +47,7 @@ The top-right global toolbar is shared by Node Groups and Settings: Logs, runtim
 - Updates run in the background. Manual Update and Update All are available in the manager; automatic updates run when enabled and the interval is greater than zero. A successful refresh preserves node IDs for matching profiles and retains removed profiles as stale while a Chain, Active Base selection, or TUN binding still references them.
 - The selected Base Node is exposed through one shared local proxy endpoint, shown and editable in the global toolbar. The default is `127.0.0.1:10808`.
 - Changing the selected Base Node changes the outbound behind that same port. If the core is running, ChainPort regenerates, validates, and restarts it automatically.
-- One shared TUN switch sits in the global toolbar. Right-click any Base Node or any individual hop inside a Chain and choose **Bind TUN**. Exactly one node ID is stored as the TUN binding; binding another node replaces it. The toolbar shows the bound node name and the node is marked in its table. TUN creates no extra local proxy port.
+- One shared TUN switch sits in the global toolbar. Right-click a Base Node and choose **Bind TUN to this node**, or right-click a Chain and choose **Bind TUN to this entire chain**. Exactly one TUN target is active: either one Base Node or one complete Chain. Binding a Chain preserves every hop in its original order; it never extracts one hop or rewrites the saved Chain. The toolbar shows the bound node/chain name and the Chain table marks the whole bound Chain. TUN creates no extra local proxy port.
 
 ### Chain Nodes
 
@@ -59,7 +59,7 @@ The top-right global toolbar is shared by Node Groups and Settings: Logs, runtim
 
 With one active Base Node and N saved Chains, the local proxy port count is N + 1: one shared Base port plus one port per Chain. TUN is a separate virtual interface and does not add a local proxy port.
 
-Existing profiles created by earlier versions are migrated from the old duplicate Chain Node wrapper into the single canonical Chain model. Legacy TUN chain selections migrate to one Base Node (the old chain's final hop). Missing base-node references invalidate a route rather than silently changing its path.
+Existing profiles created by earlier versions are migrated from the old duplicate Chain Node wrapper into the single canonical Chain model. Legacy TUN chain selections are preserved as complete Chains, not collapsed to their final hop. Missing node references invalidate a route rather than silently changing its path.
 
 ## Requirements
 
@@ -162,7 +162,7 @@ Run the GUI headlessly for a smoke test:
 QT_QPA_PLATFORM=offscreen python -c "from PySide6.QtWidgets import QApplication; from models.app_state import AppState; from app.ui_main_window import MainWindow; app = QApplication([]); window = MainWindow(AppState('/tmp/chainport-smoke-state.json')); print([window.tabs.tabText(i) for i in range(window.tabs.count())])"
 ```
 
-See [the Rust and Go migration assessment](docs/architecture-rust-go.md) for the proposed next-generation implementation strategy.
+See [the developer handover](docs/HANDOVER.md) for the current entry point and [the Go + Wails v3 rewrite plan](docs/GO-WAILS3-REWRITE-PLAN.md) for the repository audit, v2rayN comparison, architecture, migration phases and acceptance gates. `docs/architecture-rust-go.md` is retained as a redirect for older links.
 
 ## License
 

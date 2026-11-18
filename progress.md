@@ -1,5 +1,7 @@
 # Progress — Graphify + UI/UX Deep Audit & Redesign
 
+> **ARCHIVED / HISTORICAL:** The dated entries below record the 2026-04-26 redesign and earlier work. Current handover and Go/Wails v3 rewrite plan: [`docs/GO-WAILS3-REWRITE-PLAN.md`](docs/GO-WAILS3-REWRITE-PLAN.md).
+
 ## Session Log
 - **2026-04-26 12:24**: Received `/graphify` + full UI/UX redesign request.
 - **2026-04-26 12:24**: Read all 10 UI files (2,858 total lines), 5 model files, 5 core files, 4 parser files.

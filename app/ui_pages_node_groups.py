@@ -39,7 +39,7 @@ class NodeGroupsPage(QWidget):
         self.chain_page.runtime_config_changed.connect(self.runtime_config_changed.emit)
         self.base_page.active_node_changed.connect(self.active_node_changed.emit)
         self.base_page.bind_tun_requested.connect(self.bind_tun_node)
-        self.chain_page.bind_tun_requested.connect(self.bind_tun_node)
+        self.chain_page.bind_tun_chain_requested.connect(self.bind_tun_chain)
 
     def refresh(self) -> None:
         self.base_page.refresh()
@@ -50,6 +50,18 @@ class NodeGroupsPage(QWidget):
         if node is None:
             return
         self.app_state.tun_node_id = node.node_id
+        self.app_state.tun_chain_id = ""
+        self.app_state.enable_tun = True
+        self.refresh()
+        self.data_changed.emit()
+        self.runtime_config_changed.emit()
+
+    def bind_tun_chain(self, chain_id: str) -> None:
+        chain = self.app_state.find_chain_by_id(chain_id)
+        if chain is None or not self.app_state.get_nodes_for_chain(chain):
+            return
+        self.app_state.tun_chain_id = chain.chain_id
+        self.app_state.tun_node_id = ""
         self.app_state.enable_tun = True
         self.refresh()
         self.data_changed.emit()

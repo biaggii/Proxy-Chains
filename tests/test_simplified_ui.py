@@ -2,7 +2,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from app.dialogs.chain_editor_dialog import ChainEditorDialog
 from app.ui_main_window import MainWindow
@@ -38,9 +38,12 @@ def test_main_window_has_only_node_groups_and_settings(tmp_path) -> None:
     assert window.page_chains.btn_create.text() == "Create"
     assert not hasattr(window.page_chains, "btn_edit")
     assert not hasattr(window.page_chains, "btn_remove")
-    chain_summary_row = window.page_chains.layout().itemAt(1).layout()
+    chain_summary_row = window.page_chains.layout().itemAt(0).layout()
     assert chain_summary_row.indexOf(window.page_chains.btn_create) >= 0
     assert chain_summary_row.indexOf(window.page_chains.summary) >= 0
+    base_heading_row = window.page_base_nodes.layout().itemAt(0).layout()
+    assert base_heading_row.indexOf(window.page_base_nodes.endpoint_label) >= 0
+    assert base_heading_row.indexOf(window.page_base_nodes.search) >= 0
     margins = window.page_node_groups.layout().contentsMargins()
     assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (18, 14, 18, 18)
 
@@ -64,10 +67,188 @@ def test_chain_editor_orders_selected_base_nodes(tmp_path) -> None:
     dialog.hops.setCurrentRow(1)
     dialog._move_up()
 
-    name, hop_ids = dialog.result_values()
+    dialog.port_input.setValue(23456)
+    name, hop_ids, listen_port = dialog.result_values()
     assert name == "Two hop"
     assert hop_ids == [second.node_id, first.node_id]
+    assert listen_port == 23456
     dialog.close()
+    app.processEvents()
+
+
+def test_chain_editor_rejects_a_port_used_by_another_listener(tmp_path, monkeypatch) -> None:
+    app = _app()
+    state = AppState(str(tmp_path / "state.json"))
+    state.nodes = [Node("Entry", NODE_TYPE_SOCKS5, "127.0.0.1", 1080)]
+    dialog = ChainEditorDialog(state, listen_port=20001, used_ports={10808, 20002})
+    dialog.name_input.setText("Route")
+    dialog.available.item(0).setSelected(True)
+    dialog._add_selected()
+    dialog.port_input.setValue(20002)
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
+
+    dialog._validate_and_accept()
+
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert warnings and warnings[0][1] == "Port already in use"
+    dialog.close()
+    app.processEvents()
+
+
+def test_edit_chain_updates_its_local_port_without_changing_other_ports(tmp_path, monkeypatch) -> None:
+    from PySide6.QtWidgets import QDialog
+    from models.port_mapping import PortMapping
+
+    app = _app()
+    state = AppState(str(tmp_path / "state.json"))
+    entry = Node("Entry", NODE_TYPE_SOCKS5, "entry.example.test", 1080)
+    exit_node = Node("Exit", NODE_TYPE_SOCKS5, "exit.example.test", 1081)
+    state.nodes = [entry, exit_node]
+    first = Chain("First", [entry.node_id, exit_node.node_id])
+    second = Chain("Second", [exit_node.node_id])
+    state.chains = [first, second]
+    first_mapping = PortMapping(20001, first.chain_id)
+    second_mapping = PortMapping(20002, second.chain_id)
+    state.port_mappings = [first_mapping, second_mapping]
+    window = MainWindow(state)
+    window.page_chains.table.selectRow(0)
+
+    class AcceptedDialog:
+        DialogCode = QDialog.DialogCode
+
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def result_values(self):
+            return "First renamed", [entry.node_id, exit_node.node_id], 23456
+
+    monkeypatch.setattr("app.ui_pages_chains.ChainEditorDialog", AcceptedDialog)
+    window.page_chains._edit_selected()
+
+    assert first.name == "First renamed"
+    assert first_mapping.listen_port == 23456
+    assert second_mapping.listen_port == 20002
+    assert window.page_chains.table.item(0, 2).text() == "127.0.0.1:23456"
+
+    window._force_closing = True
+    window.close()
+    app.processEvents()
+
+
+def test_base_and_chain_heading_controls_share_one_row(tmp_path) -> None:
+    app = _app()
+    state = AppState(str(tmp_path / "state.json"))
+    node = Node("Base", NODE_TYPE_SOCKS5, "base.example.test", 1080)
+    state.nodes = [node]
+    state.active_base_node_id = node.node_id
+    state.chains = [Chain("Route", [node.node_id])]
+    window = MainWindow(state)
+    window.resize(1400, 900)
+    window.show()
+    app.processEvents()
+
+    base_heading = window.page_base_nodes.layout().itemAt(0).layout()
+    base_controls = [base_heading.itemAt(i).widget() for i in range(base_heading.count())]
+    base_controls = [widget for widget in base_controls if widget is not None]
+    assert len({widget.mapTo(window.page_base_nodes, widget.rect().center()).y() for widget in base_controls}) == 1
+
+    window.page_node_groups.sections.setCurrentWidget(window.page_chains)
+    app.processEvents()
+    chain_heading = window.page_chains.layout().itemAt(0).layout()
+    chain_controls = [chain_heading.itemAt(i).widget() for i in range(chain_heading.count())]
+    chain_controls = [widget for widget in chain_controls if widget is not None]
+    assert len({widget.mapTo(window.page_chains, widget.rect().center()).y() for widget in chain_controls}) == 1
+
+    window._force_closing = True
+    window.close()
+    app.processEvents()
+
+
+def test_manual_start_does_not_open_runtime_logs_window(tmp_path, monkeypatch) -> None:
+    app = _app()
+    state = AppState(str(tmp_path / "state.json"))
+    node = Node("Base", NODE_TYPE_SOCKS5, "base.example.test", 1080)
+    state.nodes = [node]
+    state.active_base_node_id = node.node_id
+    window = MainWindow(state)
+
+    class Adapter:
+        def generate_config(self, app_state):
+            return "{}", str(tmp_path / "config.json")
+
+        def get_check_command(self, config_path, exe_path):
+            return ["check", config_path]
+
+        def get_start_command(self, config_path, exe_path):
+            return ["run", config_path]
+
+    class Runner:
+        def is_running(self):
+            return False
+
+        def run_and_wait(self, command):
+            return True, "valid"
+
+        def start(self, command, on_log=None, on_exit=None):
+            return True
+
+    window.process_runner = Runner()
+    monkeypatch.setattr(window, "_get_preflight_state", lambda: {"can_start": True, "detail": "Ready"})
+    monkeypatch.setattr(window, "_get_current_adapter", lambda show_message=True: Adapter())
+    monkeypatch.setattr(window, "_refresh_action_state", lambda: None)
+
+    assert window._start_core(interactive=True) is True
+    assert not window.logs_dialog.isVisible()
+
+    window._force_closing = True
+    window.close()
+    app.processEvents()
+
+
+def test_failed_manual_start_does_not_open_runtime_logs_window(tmp_path, monkeypatch) -> None:
+    app = _app()
+    state = AppState(str(tmp_path / "state.json"))
+    node = Node("Base", NODE_TYPE_SOCKS5, "base.example.test", 1080)
+    state.nodes = [node]
+    state.active_base_node_id = node.node_id
+    window = MainWindow(state)
+
+    class Adapter:
+        def generate_config(self, app_state):
+            return "{}", str(tmp_path / "config.json")
+
+        def get_check_command(self, config_path, exe_path):
+            return ["check", config_path]
+
+        def get_start_command(self, config_path, exe_path):
+            return ["run", config_path]
+
+    class Runner:
+        def is_running(self):
+            return False
+
+        def run_and_wait(self, command):
+            return True, "valid"
+
+        def start(self, command, on_log=None, on_exit=None):
+            return False
+
+    window.process_runner = Runner()
+    monkeypatch.setattr(window, "_get_preflight_state", lambda: {"can_start": True, "detail": "Ready"})
+    monkeypatch.setattr(window, "_get_current_adapter", lambda show_message=True: Adapter())
+    monkeypatch.setattr(window, "_refresh_action_state", lambda: None)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: None)
+
+    assert window._start_core(interactive=True) is False
+    assert not window.logs_dialog.isVisible()
+
+    window._force_closing = True
+    window.close()
     app.processEvents()
 
 
@@ -224,7 +405,7 @@ def test_manual_and_import_sources_have_v2rayn_style_group_tabs(tmp_path) -> Non
     app.processEvents()
 
 
-def test_binding_tun_replaces_previous_node_and_displays_target(tmp_path) -> None:
+def test_binding_tun_switches_between_base_node_and_complete_chain(tmp_path) -> None:
     app = _app()
     state = AppState(str(tmp_path / "state.json"))
     first = Node("Base", NODE_TYPE_SOCKS5, "base.example.test", 1080)
@@ -237,13 +418,16 @@ def test_binding_tun_replaces_previous_node_and_displays_target(tmp_path) -> Non
     window.page_node_groups.bind_tun_node(first.node_id)
     assert state.enable_tun is True
     assert state.tun_node_id == first.node_id
-    window.page_node_groups.bind_tun_node(hop.node_id)
-    assert state.tun_node_id == hop.node_id
-    assert window.lbl_tun_binding.text() == "TUN: Chain Hop"
-    assert window.page_chains.table.item(0, 4).text() == "Chain Hop"
+    window.page_node_groups.bind_tun_chain(state.chains[0].chain_id)
+    assert state.tun_node_id == ""
+    assert state.tun_chain_id == state.chains[0].chain_id
+    assert state.get_runtime_chain("__tun_node__").hop_node_ids == [hop.node_id]
+    assert window.lbl_tun_binding.text() == "TUN: Chain: Route"
+    assert window.page_chains.table.item(0, 4).text() == "BOUND · Full chain"
     assert window.page_base_nodes.table.item(0, 9).text() == ""
-    window.page_chains.bind_tun_requested.emit(first.node_id)
+    window.page_node_groups.bind_tun_node(first.node_id)
     assert state.tun_node_id == first.node_id
+    assert state.tun_chain_id == ""
 
     window._force_closing = True
     window.close()
@@ -275,8 +459,8 @@ def test_node_table_context_menus_do_not_duplicate_edit_remove_buttons(tmp_path)
     assert "Create" not in chain_actions
     assert "Edit" in chain_actions
     assert "Remove" in chain_actions
-    bind_menu = next(action.menu() for action in chain_menu.actions() if action.menu())
-    assert [action.text() for action in bind_menu.actions()] == ["Hop"]
+    assert "Bind TUN to this entire chain" in chain_actions
+    assert not any(action.menu() for action in chain_menu.actions())
 
     window._force_closing = True
     window.close()
@@ -393,10 +577,13 @@ def test_start_generates_validates_then_launches_core(tmp_path) -> None:
 
     window.process_runner = FakeRunner()
     window._get_current_adapter = lambda **kwargs: FakeAdapter()
+    opened_tabs = []
+    window._open_tab = lambda key: opened_tabs.append(key)
 
     assert window._start_core(interactive=True) is True
     assert [event[0] for event in events] == ["generate", "validate", "start"]
     assert window.btn_run.text() == "Stop"
+    assert opened_tabs == []
     window._on_run_clicked()
     assert window.btn_run.text() == "Start"
 

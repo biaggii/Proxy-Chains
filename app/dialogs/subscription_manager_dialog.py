@@ -151,7 +151,7 @@ class SubscriptionManagerDialog(QDialog):
         if self.app_state.tun_node_id in node_ids:
             self.app_state.tun_node_id = ""
             self.app_state.enable_tun = False
-        if self.app_state.enable_tun and not self.app_state.get_tun_node():
+        if self.app_state.enable_tun and not self.app_state.get_tun_chain():
             self.app_state.enable_tun = False
         self.changed.emit()
         self.refresh()

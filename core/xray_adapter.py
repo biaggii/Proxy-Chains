@@ -71,7 +71,7 @@ class XrayAdapter(CoreAdapterBase):
         active_chain_ids = list(dict.fromkeys(pm.chain_id for pm in app_state.port_mappings))
         if app_state.get_active_base_node():
             active_chain_ids.append(BASE_NODE_CHAIN_ID)
-        if app_state.enable_tun and app_state.get_tun_node():
+        if app_state.enable_tun and app_state.get_tun_chain():
             active_chain_ids.append(TUN_NODE_CHAIN_ID)
 
         for cid in active_chain_ids:
@@ -180,7 +180,7 @@ def _build_xray_inbounds(port_mappings: list[PortMapping], app_state: AppState) 
     """每個 PortMapping 對應一個 socks inbound"""
     inbounds: list[dict] = []
     
-    if app_state.enable_tun and app_state.get_tun_node():
+    if app_state.enable_tun and app_state.get_tun_chain():
         inbounds.append({
             "tag": "IN_TUN",
             "port": 0,

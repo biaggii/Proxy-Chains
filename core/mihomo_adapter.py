@@ -65,7 +65,7 @@ class MihomoAdapter(CoreAdapterBase):
         active_chain_ids = {pm.chain_id for pm in app_state.port_mappings}
         if app_state.get_active_base_node():
             active_chain_ids.add(BASE_NODE_CHAIN_ID)
-        if app_state.enable_tun and app_state.get_tun_node():
+        if app_state.enable_tun and app_state.get_tun_chain():
             active_chain_ids.add(TUN_NODE_CHAIN_ID)
 
         for cid in active_chain_ids:
@@ -102,7 +102,7 @@ class MihomoAdapter(CoreAdapterBase):
             "proxies": proxies_list,
             "listeners": listeners_list,
         }
-        if app_state.enable_tun and app_state.get_tun_node():
+        if app_state.enable_tun and app_state.get_tun_chain():
             full_config["tun"] = {
                 "enable": True,
                 "stack": "system",

@@ -55,6 +55,7 @@ class AppState:
         self.port_mappings: list[PortMapping] = []
         self.active_base_node_id: str = ""
         self.tun_node_id: str = ""
+        self.tun_chain_id: str = ""
         self.base_node_listen_host: str = BASE_NODE_LISTEN_HOST
         self.base_node_listen_port: int = BASE_NODE_LISTEN_PORT
 
@@ -188,6 +189,7 @@ class AppState:
             "port_mappings": [m.to_dict() for m in self.port_mappings],
             "active_base_node_id": self.active_base_node_id,
             "tun_node_id": self.tun_node_id,
+            "tun_chain_id": self.tun_chain_id,
             "base_node_listen_host": self.base_node_listen_host,
             "base_node_listen_port": self.base_node_listen_port,
         }
@@ -285,7 +287,7 @@ class AppState:
         self.bootstrap_dns = state_dict.get("bootstrap_dns", "119.29.29.29")
         self.singbox_mux_protocol = state_dict.get("singbox_mux_protocol", "h2mux")
         self.enable_tun = state_dict.get("enable_tun", False)
-        legacy_tun_chain_id = state_dict.get("tun_chain_id") or ""
+        saved_tun_chain_id = state_dict.get("tun_chain_id") or ""
         self.run_on_startup = state_dict.get("run_on_startup", False)
         self.minimize_on_start = state_dict.get("minimize_on_start", False)
         self.auto_start_core = state_dict.get("auto_start_core", False)
@@ -303,9 +305,9 @@ class AppState:
             PortMapping.from_dict(d) for d in state_dict.get("port_mappings", [])
         ]
         self._migrate_legacy_chain_nodes()
-        has_active_base_node = "active_base_node_id" in state_dict
         self.active_base_node_id = state_dict.get("active_base_node_id") or ""
         self.tun_node_id = state_dict.get("tun_node_id") or ""
+        self.tun_chain_id = saved_tun_chain_id
         self.base_node_listen_host = state_dict.get("base_node_listen_host") or BASE_NODE_LISTEN_HOST
         try:
             self.base_node_listen_port = int(state_dict.get("base_node_listen_port") or BASE_NODE_LISTEN_PORT)
@@ -315,18 +317,14 @@ class AppState:
             self.base_node_listen_port = BASE_NODE_LISTEN_PORT
         if self.active_base_node_id and self.find_node_by_id(self.active_base_node_id) is None:
             self.active_base_node_id = ""
-        # Older versions selected a whole chain for TUN. Migrate a one-hop
-        # chain directly; for a multi-hop chain use its final node as the
-        # closest equivalent to the new single-node TUN contract.
-        if self.enable_tun and not self.tun_node_id and legacy_tun_chain_id:
-            old_tun_chain = self.find_chain_by_id(legacy_tun_chain_id)
-            if old_tun_chain and old_tun_chain.hop_node_ids:
-                candidate_id = old_tun_chain.hop_node_ids[-1]
-                if self.find_node_by_id(candidate_id):
-                    self.tun_node_id = candidate_id
-                    if not has_active_base_node:
-                        self.active_base_node_id = candidate_id
-        if self.enable_tun and not self.tun_node_id:
+        # A TUN binding is either one Base Node or one complete Chain. Preserve
+        # legacy chain bindings as chains; never collapse their hops to one node.
+        bound_chain = self.find_chain_by_id(self.tun_chain_id) if self.tun_chain_id else None
+        if bound_chain and self.get_nodes_for_chain(bound_chain):
+            self.tun_node_id = ""
+        else:
+            self.tun_chain_id = ""
+        if self.enable_tun and not self.tun_node_id and not self.tun_chain_id:
             self.tun_node_id = self.active_base_node_id
         if self.tun_node_id and self.find_node_by_id(self.tun_node_id) is None:
             self.tun_node_id = ""
@@ -436,18 +434,38 @@ class AppState:
         return node if node and node.node_type != LEGACY_CHAIN_NODE_TYPE else None
 
     def get_tun_node(self) -> Node | None:
-        """Return the single Base Node or Chain hop bound to TUN."""
+        """Return the Base Node bound to TUN, if the binding is node-based."""
+        if self.tun_chain_id:
+            return None
         if not self.tun_node_id:
             return None
         node = self.find_node_by_id(self.tun_node_id)
         return node if node and node.node_type != LEGACY_CHAIN_NODE_TYPE else None
 
+    def get_tun_chain(self) -> Chain | None:
+        """Return the complete Chain or single Base Node route bound to TUN."""
+        if self.tun_chain_id:
+            chain = self.find_chain_by_id(self.tun_chain_id)
+            return chain if chain and self.get_nodes_for_chain(chain) else None
+        node = self.get_tun_node()
+        return Chain("TUN Node", [node.node_id], TUN_NODE_CHAIN_ID) if node else None
+
+    def get_tun_binding_name(self) -> str:
+        """Human-readable name of the one TUN binding."""
+        if self.tun_chain_id:
+            chain = self.find_chain_by_id(self.tun_chain_id)
+            return f"Chain: {chain.name}" if chain else "Not bound"
+        node = self.get_tun_node()
+        return node.name if node else "Not bound"
+
     def get_runtime_chain(self, chain_id: str) -> Chain | None:
-        """Resolve a persisted chain or the synthetic single-node base route."""
+        """Resolve a persisted chain or the synthetic Base/TUN route."""
         if chain_id == BASE_NODE_CHAIN_ID:
             node = self.get_active_base_node()
             return Chain("Active Base Node", [node.node_id], BASE_NODE_CHAIN_ID) if node else None
         if chain_id == TUN_NODE_CHAIN_ID:
-            node = self.get_tun_node()
-            return Chain("TUN Node", [node.node_id], TUN_NODE_CHAIN_ID) if node else None
+            chain = self.get_tun_chain()
+            if chain is None:
+                return None
+            return Chain(chain.name, list(chain.hop_node_ids), TUN_NODE_CHAIN_ID)
         return self.find_chain_by_id(chain_id)

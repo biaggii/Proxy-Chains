@@ -1,5 +1,7 @@
 # Findings — Graphify + UI/UX Deep Audit
 
+> **ARCHIVED / HISTORICAL (2026-04-26):** This report describes a previous multi-tab UI and references page modules that have since been removed. It is not a current repository audit. Use [`docs/GO-WAILS3-REWRITE-PLAN.md`](docs/GO-WAILS3-REWRITE-PLAN.md) for the verified 2026-11-18 inventory and active rewrite plan.
+
 ## Project Overview
 - **Name**: ChainPort Gateway
 - **Tech Stack**: Python 3.14, PySide6 (Qt6)

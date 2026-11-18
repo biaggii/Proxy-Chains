@@ -40,6 +40,30 @@ def test_app_state_round_trips_v2rayn_xray_fragment_parameters(tmp_path: Path) -
     assert loaded.xray_fragment_max_split == 2
 
 
+def test_app_state_round_trips_complete_chain_tun_binding(tmp_path: Path) -> None:
+    from models.chain import Chain
+    from models.node import Node, NODE_TYPE_SOCKS5
+
+    state_path = tmp_path / "state.json"
+    state = AppState(str(state_path))
+    first = Node("Entry", NODE_TYPE_SOCKS5, "entry.example.test", 1080)
+    second = Node("Exit", NODE_TYPE_SOCKS5, "exit.example.test", 1081)
+    chain = Chain("Two hop", [first.node_id, second.node_id])
+    state.nodes = [first, second]
+    state.chains = [chain]
+    state.enable_tun = True
+    state.tun_node_id = ""
+    state.tun_chain_id = chain.chain_id
+    state.save_to_file()
+
+    loaded = AppState(str(state_path))
+    loaded.load_from_file()
+
+    assert loaded.tun_node_id == ""
+    assert loaded.tun_chain_id == chain.chain_id
+    assert loaded.get_runtime_chain("__tun_node__").hop_node_ids == [first.node_id, second.node_id]
+
+
 def test_legacy_chain_node_wrappers_migrate_to_chain_model(tmp_path: Path) -> None:
     state_path = tmp_path / "state.json"
     state = AppState(str(state_path))

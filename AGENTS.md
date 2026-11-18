@@ -4,7 +4,7 @@ This document gives AI coding assistants the minimum project context needed to w
 
 ## Project Overview
 
-ChainPort Gateway is a Windows desktop GUI for managing proxy routes for browsers and other applications.
+ChainPort Gateway is a cross-platform desktop GUI for managing proxy nodes, ordered multi-hop Chains, local proxy listeners and one TUN route.
 
 Core flow:
 
@@ -94,42 +94,42 @@ Parser errors should be actionable and include location plus reason.
 
 ## GUI Pages
 
-| Tab | File | Responsibility |
-| :-- | :--- | :------------- |
-| Home | `app/ui_pages_dashboard.py` | Readiness, quick actions, metrics, and next-step guidance |
-| Subscriptions | `app/ui_pages_subscriptions.py` | Provider source management and refresh |
-| Nodes | `app/ui_pages_nodes.py` | Node review, manual import, URI copy/paste, and chain helpers |
-| Routing | `app/ui_pages_routing.py` | Combined routing workspace that hosts Chains and Ports |
-| Logs | `app/ui_pages_logs.py` | Live stdout/stderr and validation output |
-| Settings | `app/ui_pages_settings.py` | Core executable, startup behavior, auto-start launch behavior, advanced options, and profile import/export |
+The active UI has exactly two top-level tabs:
 
-Nested routing pages:
+| Tab / subtab | File | Responsibility |
+| :--- | :--- | :--- |
+| Node Groups / Base | `app/ui_pages_node_groups.py`, `app/ui_pages_base_nodes.py` | Base Node table, subscription source tabs, node context menu, active Base selection and Base-node TUN binding. |
+| Node Groups / Chain | `app/ui_pages_node_groups.py`, `app/ui_pages_chains.py` | Saved ordered Chains, one local port per Chain, create/edit/remove and whole-Chain TUN binding. |
+| Settings | `app/ui_pages_settings.py` | Core executable, DNS, network/fragment options, startup behavior and profile import/export. |
+| Runtime Logs dialog | `app/ui_pages_logs.py` | Live core stdout/stderr, validation output, clear/copy snapshot. Open only from the global Logs control; Start must not open it automatically. |
 
-| Page | File | Responsibility |
-| :--- | :--- | :------------- |
-| Chains | `app/ui_pages_chains.py` | Create and edit chains |
-| Ports | `app/ui_pages_ports.py` | Manage port bindings and the dedicated TUN route |
+Dialogs:
 
-`app/ui_main_window.py` is the shell for the whole app:
+| File | Responsibility |
+| :--- | :--- |
+| `app/dialogs/chain_editor_dialog.py` | Create/edit Chain name, ordered hops and its local listen port. |
+| `app/dialogs/node_edit_dialog.py` | Edit one Base Node. |
+| `app/dialogs/subscription_edit_dialog.py` | Create/edit a subscription source. |
+| `app/dialogs/subscription_manager_dialog.py` | Manage sources and trigger updates. |
 
-- Organizes the six top-level tabs with `QTabWidget`
-- Keeps `Apply`, `Run as Admin`, `Start`, and `Stop` visible globally
-- Runs readiness checks and updates the Home dashboard plus action bar state
-- Bridges background process logs into the GUI thread with `LogBridge(QObject)` and `Signal`
-- Saves `state.json` whenever a page emits `data_changed`
+`app/ui_main_window.py` owns the two top-level tabs and global Logs/status/TUN/Shared Port/Start-Stop toolbar. It generates and validates the selected core config before starting the external process, bridges background logs into the GUI thread with `LogBridge(QObject)` and `Signal`, and saves `state.json` when pages emit `data_changed`.
+
+TUN binding is exactly one target: one Base Node or one complete ordered Chain. A Chain binding must preserve all hops and order; never convert it to one hop. `AppState.tun_chain_id` stores the full Chain binding, while `tun_node_id` stores a Base Node binding.
+
+For the verified current architecture, migration assessment and handover plan, read `docs/GO-WAILS3-REWRITE-PLAN.md`. Older audits and task notes may describe a previous multi-tab UI and are historical only.
 
 ## Language And UI Policy
 
 - All user-facing UI text must be English
 - All dialogs, notifications, runtime logs, parser error messages, and generated default display names must be English
 - New or modified comments and docstrings should be English
-- Keep the Home dashboard, Routing workspace, and global action bar terminology consistent across UI and docs
+- Keep Node Groups, Base, Chain, Settings and the global action bar terminology consistent across UI and docs
 
 Preferred product terms:
 
 - Use `source` or `subscription source` instead of untranslated provider wording
 - Use `binding` or `port binding` when describing the UI
-- Use `Routing` for the combined Chains plus Ports workspace
+- Use `Chain` for a saved ordered route; each Chain has one local proxy port
 
 ## Coding Conventions
 

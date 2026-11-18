@@ -1,5 +1,7 @@
 # ChainPort Gateway — Architecture Graph + UI/UX Deep Audit
 
+> **ARCHIVED / HISTORICAL (2026-04-26):** The module list and UX findings below refer to a former multi-tab implementation. Do not use this as a current code map. See [`docs/GO-WAILS3-REWRITE-PLAN.md`](docs/GO-WAILS3-REWRITE-PLAN.md) for the verified active architecture and current cleanup findings.
+
 > **Generated:** 2026-04-26 · **Scope:** Full repository `d:\Codes\Sing-chain`
 
 ---

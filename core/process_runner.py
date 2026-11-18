@@ -13,6 +13,8 @@ GUI 層只需要呼叫這個模組的方法，不直接碰 subprocess。
 import subprocess
 import threading
 from typing import Callable
+import os
+import shutil
 
 
 class ProcessRunner:
@@ -39,6 +41,29 @@ class ProcessRunner:
         # log 回呼函式（每讀到一行就呼叫）
         self._on_log: Callable[[str], None] | None = None
         self._on_exit: Callable[[], None] | None = None
+
+    @staticmethod
+    def _build_environment(command: list[str]) -> dict[str, str]:
+        """Build the core environment, including Xray's bundled geo assets."""
+        env = os.environ.copy()
+        env["ENABLE_DEPRECATED_DNS_SERVERS"] = "true"
+        env["ENABLE_DEPRECATED_LEGACY_DNS_SERVERS"] = "true"
+        env["ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS"] = "true"
+        env["ENABLE_DEPRECATED_OUTBOUND_DNS_RULES"] = "true"
+
+        executable = command[0] if command else ""
+        if os.path.basename(executable).lower() in {"xray", "xray.exe"}:
+            resolved = shutil.which(executable) or os.path.abspath(executable)
+            executable_dir = os.path.dirname(os.path.realpath(resolved))
+            candidates = [executable_dir, os.path.dirname(executable_dir)]
+            for asset_dir in candidates:
+                if (
+                    os.path.isfile(os.path.join(asset_dir, "geoip.dat"))
+                    and os.path.isfile(os.path.join(asset_dir, "geosite.dat"))
+                ):
+                    env["XRAY_LOCATION_ASSET"] = asset_dir
+                    break
+        return env
 
     def is_running(self) -> bool:
         """檢查進程是否還在跑"""
@@ -71,13 +96,8 @@ class ProcessRunner:
         self._on_exit = kwargs.get('on_exit', None)
         self._stop_flag.clear()
 
-        # 準備環境變數（為了禁用部分 sing-box 的棄用警告/錯誤）
-        import os
-        env = os.environ.copy()
-        env["ENABLE_DEPRECATED_DNS_SERVERS"] = "true"
-        env["ENABLE_DEPRECATED_LEGACY_DNS_SERVERS"] = "true"
-        env["ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS"] = "true"
-        env["ENABLE_DEPRECATED_OUTBOUND_DNS_RULES"] = "true"
+        # Prepare core environment and point Xray at the bundled geo data.
+        env = self._build_environment(command)
 
         # 啟動進程（把 stdout 和 stderr 合併到一起讀）
         try:
@@ -158,12 +178,7 @@ class ProcessRunner:
           success = True 表示 exit code == 0
         """
         try:
-            import os
-            env = os.environ.copy()
-            env["ENABLE_DEPRECATED_DNS_SERVERS"] = "true"
-            env["ENABLE_DEPRECATED_LEGACY_DNS_SERVERS"] = "true"
-            env["ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS"] = "true"
-            env["ENABLE_DEPRECATED_OUTBOUND_DNS_RULES"] = "true"
+            env = self._build_environment(command)
 
             result = subprocess.run(
                 command,

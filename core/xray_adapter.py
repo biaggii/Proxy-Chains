@@ -18,7 +18,8 @@ Xray 配置結構：
   "inbounds": [ { "protocol": "socks", "tag": "IN_20001", "port": 20001, ... } ],
   "outbounds": [
     { "protocol": "vmess", "tag": "CHAIN_c1_H1", "settings": {...} },
-    { "protocol": "trojan", "tag": "CHAIN_c1_H2", "settings": {...}, "proxySettings": {"tag": "CHAIN_c1_H1"} },
+    { "protocol": "trojan", "tag": "CHAIN_c1_H2", "settings": {...},
+      "streamSettings": {"sockopt": {"dialerProxy": "CHAIN_c1_H1"}} },
     ...
   ],
   "routing": {
@@ -32,6 +33,7 @@ Xray 配置結構：
 import json
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
 from core.core_adapter_base import CoreAdapterBase
 from models.app_state import AppState, BASE_NODE_CHAIN_ID, TUN_NODE_CHAIN_ID
@@ -66,11 +68,11 @@ class XrayAdapter(CoreAdapterBase):
         outbounds_list: list[dict] = []
         chain_final_tag_map: dict[str, str] = {}
 
-        active_chain_ids = {pm.chain_id for pm in app_state.port_mappings}
+        active_chain_ids = list(dict.fromkeys(pm.chain_id for pm in app_state.port_mappings))
         if app_state.get_active_base_node():
-            active_chain_ids.add(BASE_NODE_CHAIN_ID)
+            active_chain_ids.append(BASE_NODE_CHAIN_ID)
         if app_state.enable_tun and app_state.get_tun_node():
-            active_chain_ids.add(TUN_NODE_CHAIN_ID)
+            active_chain_ids.append(TUN_NODE_CHAIN_ID)
 
         for cid in active_chain_ids:
             chain = app_state.get_runtime_chain(cid)
@@ -102,19 +104,27 @@ class XrayAdapter(CoreAdapterBase):
             app_state.port_mappings, chain_final_tag_map, app_state
         )
         
-        # 預防 TUN 迴圈：排除核心程序與本地流量
+        # Match v2rayN's Xray route policy for private destinations. The
+        # bundled Xray geodata is selected by XRAY_LOCATION_ASSET in the
+        # process runner.
         routing_rules.insert(0, {
             "type": "field",
-            # Keep the bundled Xray standalone; geosite:private requires an
-            # external geosite.dat that is not shipped with the core binary.
-            "domain": ["regexp:^localhost$"],
+            "domain": ["geosite:private"],
             "outboundTag": "DIRECT"
         })
         routing_rules.insert(0, {
             "type": "field",
-            "ip": ["127.0.0.0/8", "192.168.0.0/16", "10.0.0.0/8"],
+            "ip": ["geoip:private"],
             "outboundTag": "DIRECT"
         })
+
+        if app_state.block_quic:
+            routing_rules.insert(0, {
+                "type": "field",
+                "network": "udp",
+                "port": "443",
+                "outboundTag": "BLOCK",
+            })
 
         if not app_state.enable_ipv6:
             # 阻擋所有 IPv6
@@ -124,13 +134,24 @@ class XrayAdapter(CoreAdapterBase):
                 "outboundTag": "BLOCK"
             })
 
+        dns_outbound_tag = _select_xray_dns_outbound(
+            app_state, app_state.port_mappings, chain_final_tag_map
+        )
+        routing_rules.insert(0, {
+            "type": "field",
+            "inboundTag": ["dns-module"],
+            "outboundTag": dns_outbound_tag,
+        })
+        routing_rules.insert(0, {
+            "type": "field",
+            "inboundTag": ["direct-dns-1"],
+            "outboundTag": "DIRECT",
+        })
+
         # ---------- 4. 組裝 ----------
         full_config: dict[str, Any] = {
             "log": {"loglevel": app_state.log_level},
-            "dns": {
-                "servers": ["8.8.8.8", "1.1.1.1"],
-                "queryStrategy": "UseIPv4" if not app_state.enable_ipv6 else "UseIP"
-            },
+            "dns": _build_xray_dns_config(app_state),
             "inbounds": inbounds_list,
             "outbounds": outbounds_list,
             "routing": {
@@ -204,7 +225,7 @@ def _build_xray_inbounds(port_mappings: list[PortMapping], app_state: AppState) 
 
 
 # ================================================================
-# Chain Outbounds（用 proxySettings 串鏈）
+# Chain Outbounds（用 streamSettings.sockopt.dialerProxy 串鏈）
 # ================================================================
 
 def _build_xray_chain_outbounds(
@@ -215,8 +236,8 @@ def _build_xray_chain_outbounds(
     """
     Xray 26.9.9+ uses streamSettings.sockopt.dialerProxy:
       H1 = A（直連）
-      H2 = B + proxySettings.tag = H1
-      H3 = C + proxySettings.tag = H2
+      H2 = B + dialerProxy = H1
+      H3 = C + dialerProxy = H2
     """
     hop_outbounds: list[dict] = []
 
@@ -231,12 +252,43 @@ def _build_xray_chain_outbounds(
         # active while its TCP connection is established through the previous hop.
         if hop_index > 0:
             prev_tag = f"CHAIN_{chain_id}_H{hop_number - 1}"
-            stream_settings = outbound.setdefault("streamSettings", {"network": "tcp"})
+            stream_settings = outbound.setdefault("streamSettings", {"network": "raw"})
+            stream_settings.setdefault("network", "raw")
             stream_settings.setdefault("sockopt", {})["dialerProxy"] = prev_tag
 
         hop_outbounds.append(outbound)
 
+    # v2rayN applies outbound finalmask to TLS nodes that are not themselves
+    # dialed through another hop. REALITY cannot use the tlshello packet mode.
+    if app_state.enable_fragment:
+        for outbound in hop_outbounds:
+            stream_settings = outbound.get("streamSettings") or {}
+            if not stream_settings.get("security"):
+                continue
+            if (stream_settings.get("sockopt") or {}).get("dialerProxy"):
+                continue
+            packet_mask = _build_xray_fragment_mask(app_state)
+            if (
+                stream_settings.get("security") == "reality"
+                and packet_mask["settings"]["packets"] == "tlshello"
+            ):
+                packet_mask["settings"]["packets"] = "1-3"
+            stream_settings["finalmask"] = {"tcp": [packet_mask]}
+            outbound["streamSettings"] = stream_settings
+
     final_tag = f"CHAIN_{chain_id}_H{len(hop_nodes)}"
+    if app_state.enable_final_fragment:
+        fragment_tag = f"CHAIN_{chain_id}_FINAL_FRAGMENT"
+        hop_outbounds.append({
+            "protocol": "freedom",
+            "tag": fragment_tag,
+            "settings": {},
+            "streamSettings": {
+                "finalmask": {"tcp": [_build_xray_fragment_mask(app_state)]},
+                "sockopt": {"dialerProxy": final_tag},
+            },
+        })
+        final_tag = fragment_tag
     return hop_outbounds, final_tag
 
 
@@ -386,6 +438,7 @@ def _xray_socks(node: Node, tag: str) -> dict:
         "protocol": "socks",
         "tag": tag,
         "settings": {"servers": [server_dict]},
+        "streamSettings": {"network": "raw"},
     }
     return ob
 
@@ -405,6 +458,7 @@ def _xray_http(node: Node, tag: str) -> dict:
         "protocol": "http",
         "tag": tag,
         "settings": {"servers": [server_dict]},
+        "streamSettings": {"network": "raw"},
     }
     return ob
 
@@ -511,3 +565,87 @@ def _build_xray_routing(
             "outboundTag": final_tag,
         })
     return rules
+
+
+def _build_xray_fragment_mask(app_state: AppState) -> dict[str, Any]:
+    """Build the same Xray finalmask fragment shape generated by v2rayN."""
+    lengths = list(app_state.xray_fragment_lengths or ["50-100"])
+    delays = list(app_state.xray_fragment_delays or ["10-20"])
+    return {
+        "type": "fragment",
+        "settings": {
+            "packets": app_state.xray_fragment_packets or "tlshello",
+            "length": lengths[0],
+            "delay": delays[0],
+            "lengths": lengths,
+            "delays": delays,
+            "maxSplit": max(0, int(app_state.xray_fragment_max_split or 0)),
+        },
+    }
+
+
+def _build_xray_dns_config(app_state: AppState) -> dict[str, Any]:
+    """Mirror v2rayN's bootstrap + remote DoH DNS configuration."""
+    remote_dns = (app_state.remote_dns_url or "").strip()
+    parsed_dns = urlsplit(remote_dns)
+    if parsed_dns.scheme.lower() != "https" or not parsed_dns.hostname:
+        raise ValueError(
+            "Remote DNS must be an HTTPS URL, for example "
+            "https://cloudflare-dns.com/dns-query."
+        )
+    bootstrap_dns = (app_state.bootstrap_dns or "").strip()
+    if not bootstrap_dns:
+        raise ValueError("Bootstrap DNS address cannot be empty.")
+
+    hosts = {
+        "dns.google": ["8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844"],
+        "dns.alidns.com": ["223.5.5.5", "223.6.6.6", "2400:3200::1", "2400:3200:baba::1"],
+        "one.one.one.one": ["1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001"],
+        "1dot1dot1dot1.cloudflare-dns.com": ["1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001"],
+        "cloudflare-dns.com": ["104.16.249.249", "104.16.248.249", "2606:4700::6810:f8f9", "2606:4700::6810:f9f9"],
+        "dns.cloudflare.com": ["162.159.61.8", "172.64.41.8", "2a06:98c1:52::8", "2803:f800:53::8"],
+        "dot.pub": ["1.12.12.12", "120.53.53.53"],
+        "doh.pub": ["1.12.12.12", "120.53.53.53"],
+        "dns.quad9.net": ["9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9"],
+        "dns.yandex.net": ["77.88.8.8", "77.88.8.1", "2a02:6b8::feed:0ff", "2a02:6b8:0:1::feed:0ff"],
+        "dns.sb": ["45.11.45.11", "185.222.222.222", "2a09::", "2a11::"],
+        "dns.umbrella.com": ["208.67.220.220", "208.67.222.222", "2620:119:35::35", "2620:119:53::53"],
+        "dns.sse.cisco.com": ["208.67.220.220", "208.67.222.222", "2620:119:35::35", "2620:119:53::53"],
+        "engage.cloudflareclient.com": ["162.159.192.1", "2606:4700:d0::a29f:c001"],
+    }
+    return {
+        "hosts": hosts,
+        "servers": [
+            {
+                "address": bootstrap_dns,
+                "domains": [f"full:{parsed_dns.hostname}"],
+                "skipFallback": True,
+            },
+            {
+                "address": bootstrap_dns,
+                "domains": ["geosite:private"],
+                "skipFallback": True,
+                "tag": "direct-dns-1",
+            },
+            remote_dns,
+        ],
+        "tag": "dns-module",
+    }
+
+
+def _select_xray_dns_outbound(
+    app_state: AppState,
+    port_mappings: list[PortMapping],
+    chain_final_tag_map: dict[str, str],
+) -> str:
+    """Xray has one internal DNS module; prefer TUN, then Base, then a Chain."""
+    if app_state.enable_tun and TUN_NODE_CHAIN_ID in chain_final_tag_map:
+        return chain_final_tag_map[TUN_NODE_CHAIN_ID]
+    base_outbound = chain_final_tag_map.get(BASE_NODE_CHAIN_ID)
+    if base_outbound:
+        return base_outbound
+    for mapping in port_mappings:
+        outbound_tag = chain_final_tag_map.get(mapping.chain_id)
+        if outbound_tag:
+            return outbound_tag
+    return "DIRECT"

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 import json
 import os
+import re
 import sys
 from PySide6.QtCore import Signal
 from models.app_state import AppState
@@ -114,10 +115,10 @@ class SettingsPage(QWidget):
         self.combo_singbox_mux.addItems(["h2mux", "smux", "yamux"])
         advanced_form.addRow("sing-box Mux Protocol:", self.combo_singbox_mux)
 
-        self.check_fragment = QCheckBox("Enable Fragment")
+        self.check_fragment = QCheckBox("Enable outbound TLS fragment")
         advanced_form.addRow("", self.check_fragment)
 
-        self.check_final_fragment = QCheckBox("Enable Final TLS Record Fragment")
+        self.check_final_fragment = QCheckBox("Enable final fragment (Xray / sing-box)")
         advanced_form.addRow("", self.check_final_fragment)
 
         self.check_block_quic = QCheckBox("Block QUIC (UDP/443)")
@@ -139,6 +140,24 @@ class SettingsPage(QWidget):
 
         advanced_group.setLayout(advanced_form)
         layout.addWidget(advanced_group)
+
+        xray_fragment_group = QGroupBox("Xray Fragment Parameters")
+        xray_fragment_form = QFormLayout()
+        self.input_xray_fragment_packets = QLineEdit()
+        self.input_xray_fragment_packets.setPlaceholderText("tlshello or 1-1 to 1-5")
+        xray_fragment_form.addRow("Packets:", self.input_xray_fragment_packets)
+        self.input_xray_fragment_lengths = QLineEdit()
+        self.input_xray_fragment_lengths.setPlaceholderText("50-100 (comma-separated)")
+        xray_fragment_form.addRow("Lengths:", self.input_xray_fragment_lengths)
+        self.input_xray_fragment_delays = QLineEdit()
+        self.input_xray_fragment_delays.setPlaceholderText("10-20 (comma-separated)")
+        xray_fragment_form.addRow("Delays:", self.input_xray_fragment_delays)
+        self.input_xray_fragment_max_split = QLineEdit()
+        self.input_xray_fragment_max_split.setPlaceholderText("0")
+        xray_fragment_form.addRow("Max split:", self.input_xray_fragment_max_split)
+        xray_fragment_group.setLayout(xray_fragment_form)
+        self.xray_fragment_group = xray_fragment_group
+        layout.addWidget(xray_fragment_group)
 
         startup_group = QGroupBox("Startup and Window")
         startup_form = QFormLayout()
@@ -196,6 +215,11 @@ class SettingsPage(QWidget):
         self.combo_singbox_mux.setCurrentText(self.app_state.singbox_mux_protocol)
         self.check_fragment.setChecked(self.app_state.enable_fragment)
         self.check_final_fragment.setChecked(self.app_state.enable_final_fragment)
+        self.input_xray_fragment_packets.setText(self.app_state.xray_fragment_packets)
+        self.input_xray_fragment_lengths.setText(", ".join(self.app_state.xray_fragment_lengths))
+        self.input_xray_fragment_delays.setText(", ".join(self.app_state.xray_fragment_delays))
+        self.input_xray_fragment_max_split.setText(str(self.app_state.xray_fragment_max_split))
+        self._update_xray_fragment_visibility()
         self.check_block_quic.setChecked(self.app_state.block_quic)
         self.input_remote_dns.setText(self.app_state.remote_dns_url)
         self.input_bootstrap_dns.setText(self.app_state.bootstrap_dns)
@@ -218,6 +242,7 @@ class SettingsPage(QWidget):
 
     def _on_core_type_changed(self, text: str) -> None:
         """Try to resolve a sensible executable path for the chosen core."""
+        self._update_xray_fragment_visibility()
         saved_path = self.app_state.core_exe_paths.get(text, "")
         if saved_path and os.path.isfile(saved_path):
              self.input_exe_path.setText(saved_path)
@@ -256,6 +281,23 @@ class SettingsPage(QWidget):
 
     def _on_save_settings(self) -> None:
         """Persist the form values back into ``app_state``."""
+        try:
+            fragment_packets = self.input_xray_fragment_packets.text().strip() or "tlshello"
+            if not re.fullmatch(r"(?:tlshello|1-[1-5])", fragment_packets):
+                raise ValueError("Packets must be tlshello or one of 1-1 through 1-5.")
+            fragment_lengths = self._parse_fragment_ranges(
+                self.input_xray_fragment_lengths.text(), ["50-100"]
+            )
+            fragment_delays = self._parse_fragment_ranges(
+                self.input_xray_fragment_delays.text(), ["10-20"]
+            )
+            fragment_max_split = int(self.input_xray_fragment_max_split.text().strip() or "0")
+            if fragment_max_split < 0:
+                raise ValueError("Max split cannot be negative.")
+        except ValueError as err:
+            QMessageBox.warning(self, "Invalid fragment settings", str(err))
+            return
+
         core_type = self.combo_core_type.currentText()
         self.app_state.core_type = core_type
         self.app_state.log_level = self.combo_log_level.currentText()
@@ -268,6 +310,10 @@ class SettingsPage(QWidget):
         self.app_state.singbox_mux_protocol = self.combo_singbox_mux.currentText()
         self.app_state.enable_fragment = self.check_fragment.isChecked()
         self.app_state.enable_final_fragment = self.check_final_fragment.isChecked()
+        self.app_state.xray_fragment_packets = fragment_packets
+        self.app_state.xray_fragment_lengths = fragment_lengths
+        self.app_state.xray_fragment_delays = fragment_delays
+        self.app_state.xray_fragment_max_split = fragment_max_split
         self.app_state.block_quic = self.check_block_quic.isChecked()
         self.app_state.remote_dns_url = self.input_remote_dns.text().strip()
         self.app_state.bootstrap_dns = self.input_bootstrap_dns.text().strip()
@@ -284,6 +330,18 @@ class SettingsPage(QWidget):
             "Settings saved. Restart the core if runtime behaviour changed.",
             "success",
         )
+
+    def _update_xray_fragment_visibility(self) -> None:
+        self.xray_fragment_group.setVisible(self.combo_core_type.currentText() == "xray")
+
+    @staticmethod
+    def _parse_fragment_ranges(value: str, default: list[str]) -> list[str]:
+        values = [item.strip() for item in value.split(",") if item.strip()]
+        if not values:
+            return list(default)
+        if any(not re.fullmatch(r"\d+(?:-\d+)?", item) for item in values):
+            raise ValueError("Fragment lengths and delays must be numbers or ranges, e.g. 50-100.")
+        return values
 
     def _on_export_data(self) -> None:
         """Export the current profile to a JSON file."""

@@ -77,6 +77,11 @@ class AppState:
         self.allow_insecure: bool = False
         self.enable_fragment: bool = False
         self.enable_final_fragment: bool = False
+        # Match the user's v2rayN Xray Fragment4RayItem defaults.
+        self.xray_fragment_packets: str = "tlshello"
+        self.xray_fragment_lengths: list[str] = ["50-100"]
+        self.xray_fragment_delays: list[str] = ["10-20"]
+        self.xray_fragment_max_split: int = 0
         self.block_quic: bool = True
         self.remote_dns_url: str = "https://cloudflare-dns.com/dns-query"
         self.bootstrap_dns: str = "119.29.29.29"
@@ -164,6 +169,10 @@ class AppState:
             "allow_insecure": self.allow_insecure,
             "enable_fragment": self.enable_fragment,
             "enable_final_fragment": self.enable_final_fragment,
+            "xray_fragment_packets": self.xray_fragment_packets,
+            "xray_fragment_lengths": self.xray_fragment_lengths,
+            "xray_fragment_delays": self.xray_fragment_delays,
+            "xray_fragment_max_split": self.xray_fragment_max_split,
             "block_quic": self.block_quic,
             "remote_dns_url": self.remote_dns_url,
             "bootstrap_dns": self.bootstrap_dns,
@@ -249,6 +258,26 @@ class AppState:
         self.enable_final_fragment = state_dict.get(
             "enable_final_fragment", self.enable_fragment
         )
+        self.xray_fragment_packets = str(
+            state_dict.get("xray_fragment_packets", "tlshello") or "tlshello"
+        ).strip()
+        for field_name, default_value in (
+            ("xray_fragment_lengths", ["50-100"]),
+            ("xray_fragment_delays", ["10-20"]),
+        ):
+            raw_values = state_dict.get(field_name, default_value)
+            if isinstance(raw_values, str):
+                raw_values = raw_values.split(",")
+            if not isinstance(raw_values, list):
+                raw_values = default_value
+            values = [str(value).strip() for value in raw_values if str(value).strip()]
+            setattr(self, field_name, values or list(default_value))
+        try:
+            self.xray_fragment_max_split = max(
+                0, int(state_dict.get("xray_fragment_max_split", 0) or 0)
+            )
+        except (TypeError, ValueError):
+            self.xray_fragment_max_split = 0
         self.block_quic = state_dict.get("block_quic", True)
         self.remote_dns_url = state_dict.get(
             "remote_dns_url", "https://cloudflare-dns.com/dns-query"

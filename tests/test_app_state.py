@@ -22,6 +22,24 @@ def test_app_state_round_trips_auto_start_core(tmp_path: Path) -> None:
     assert loaded.auto_start_core is True
 
 
+def test_app_state_round_trips_v2rayn_xray_fragment_parameters(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state = AppState(str(state_path))
+    state.xray_fragment_packets = "tlshello"
+    state.xray_fragment_lengths = ["50-100", "120-160"]
+    state.xray_fragment_delays = ["10-20"]
+    state.xray_fragment_max_split = 2
+    state.save_to_file()
+
+    loaded = AppState(str(state_path))
+    loaded.load_from_file()
+
+    assert loaded.xray_fragment_packets == "tlshello"
+    assert loaded.xray_fragment_lengths == ["50-100", "120-160"]
+    assert loaded.xray_fragment_delays == ["10-20"]
+    assert loaded.xray_fragment_max_split == 2
+
+
 def test_legacy_chain_node_wrappers_migrate_to_chain_model(tmp_path: Path) -> None:
     state_path = tmp_path / "state.json"
     state = AppState(str(state_path))

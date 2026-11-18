@@ -92,6 +92,147 @@ def test_xray_uses_modern_dialer_proxy_and_separate_base_tun(tmp_path):
     assert tun_rule["outboundTag"] == f"CHAIN_{TUN_NODE_CHAIN_ID}_H1"
 
 
+def test_xray_matches_v2rayn_finalmask_chain_dns_and_quic_policy(tmp_path):
+    state = _state(tmp_path)
+    state.enable_fragment = True
+    state.enable_final_fragment = True
+    state.block_quic = True
+
+    text, _ = XrayAdapter().generate_config(state)
+    config = json.loads(text)
+    chain = state.chains[1]
+    first_tag = f"CHAIN_{chain.chain_id}_H1"
+    second_tag = f"CHAIN_{chain.chain_id}_H2"
+    final_tag = f"CHAIN_{chain.chain_id}_FINAL_FRAGMENT"
+
+    first_hop = next(item for item in config["outbounds"] if item["tag"] == first_tag)
+    second_hop = next(item for item in config["outbounds"] if item["tag"] == second_tag)
+    final_fragment = next(item for item in config["outbounds"] if item["tag"] == final_tag)
+
+    assert first_hop["streamSettings"]["network"] == "raw"
+    assert second_hop["streamSettings"]["network"] == "raw"
+    assert second_hop["streamSettings"]["sockopt"]["dialerProxy"] == first_tag
+    assert final_fragment["protocol"] == "freedom"
+    assert final_fragment["streamSettings"]["sockopt"]["dialerProxy"] == second_tag
+    assert final_fragment["streamSettings"]["finalmask"]["tcp"] == [{
+        "type": "fragment",
+        "settings": {
+            "packets": "tlshello",
+            "length": "50-100",
+            "delay": "10-20",
+            "lengths": ["50-100"],
+            "delays": ["10-20"],
+            "maxSplit": 0,
+        },
+    }]
+
+    chain_route = next(
+        rule for rule in config["routing"]["rules"]
+        if rule.get("inboundTag") == ["IN_20002"]
+    )
+    assert chain_route["outboundTag"] == final_tag
+    quic_rule = next(
+        rule for rule in config["routing"]["rules"]
+        if rule.get("network") == "udp" and rule.get("port") == "443"
+    )
+    assert quic_rule["outboundTag"] == "BLOCK"
+    private_rule = next(
+        rule for rule in config["routing"]["rules"]
+        if rule.get("outboundTag") == "DIRECT" and "ip" in rule
+    )
+    assert config["routing"]["rules"].index(quic_rule) < config["routing"]["rules"].index(private_rule)
+
+    assert config["dns"]["tag"] == "dns-module"
+    assert config["dns"]["servers"][-1] == "https://cloudflare-dns.com/dns-query"
+    assert "queryStrategy" not in config["dns"]
+    assert config["dns"]["servers"][1]["domains"] == ["geosite:private"]
+    assert "dns.alidns.com" in config["dns"]["hosts"]
+    dns_route = next(
+        rule for rule in config["routing"]["rules"]
+        if rule.get("inboundTag") == ["dns-module"]
+    )
+    assert dns_route["outboundTag"] == f"CHAIN_{BASE_NODE_CHAIN_ID}_FINAL_FRAGMENT"
+
+    assert {"type": "field", "ip": ["geoip:private"], "outboundTag": "DIRECT"} in config["routing"]["rules"]
+    assert {"type": "field", "domain": ["geosite:private"], "outboundTag": "DIRECT"} in config["routing"]["rules"]
+
+
+def test_xray_tun_dns_uses_the_bound_tun_node(tmp_path):
+    state = _state(tmp_path, tun=True)
+    state.enable_final_fragment = True
+    state.tun_node_id = state.nodes[2].node_id
+
+    text, _ = XrayAdapter().generate_config(state)
+    config = json.loads(text)
+    dns_route = next(
+        rule for rule in config["routing"]["rules"]
+        if rule.get("inboundTag") == ["dns-module"]
+    )
+
+    assert dns_route["outboundTag"] == f"CHAIN_{TUN_NODE_CHAIN_ID}_FINAL_FRAGMENT"
+
+
+def test_xray_outbound_fragment_skips_tls_hops_with_dialer_proxy(tmp_path):
+    state = _state(tmp_path)
+    tls_node = Node(
+        "TLS entry",
+        "vless",
+        "tls-entry.example.test",
+        443,
+        uuid_str="00000000-0000-0000-0000-000000000001",
+        tls_enabled=True,
+        sni="tls-entry.example.test",
+        extra={"security": "tls", "query": {}},
+    )
+    state.nodes.append(tls_node)
+    state.chains[0].hop_node_ids = [tls_node.node_id]
+    state.chains[1].hop_node_ids = [state.nodes[1].node_id, tls_node.node_id]
+    state.enable_fragment = True
+
+    text, _ = XrayAdapter().generate_config(state)
+    config = json.loads(text)
+    first_hop = next(
+        item for item in config["outbounds"]
+        if item["tag"] == f"CHAIN_{state.chains[0].chain_id}_H1"
+    )
+    chained_tls_hop = next(
+        item for item in config["outbounds"]
+        if item["tag"] == f"CHAIN_{state.chains[1].chain_id}_H2"
+    )
+
+    assert first_hop["streamSettings"]["finalmask"]["tcp"][0]["settings"]["packets"] == "tlshello"
+    assert chained_tls_hop["streamSettings"]["sockopt"]["dialerProxy"] == (
+        f"CHAIN_{state.chains[1].chain_id}_H1"
+    )
+    assert "finalmask" not in chained_tls_hop["streamSettings"]
+
+
+def test_xray_reality_fragment_uses_v2rayn_packet_fallback(tmp_path):
+    state = _state(tmp_path)
+    reality_node = Node(
+        "REALITY entry",
+        "vless",
+        "reality-entry.example.test",
+        443,
+        uuid_str="00000000-0000-0000-0000-000000000002",
+        tls_enabled=True,
+        sni="reality-entry.example.test",
+        extra={"security": "reality", "query": {"pbk": ["test-key"], "sid": ["test"]}},
+    )
+    state.nodes.append(reality_node)
+    state.chains[0].hop_node_ids = [reality_node.node_id]
+    state.enable_fragment = True
+
+    text, _ = XrayAdapter().generate_config(state)
+    config = json.loads(text)
+    outbound = next(
+        item for item in config["outbounds"]
+        if item["tag"] == f"CHAIN_{state.chains[0].chain_id}_H1"
+    )
+
+    assert outbound["streamSettings"]["finalmask"]["tcp"][0]["settings"]["packets"] == "1-3"
+
+
 def test_mihomo_uses_base_listener_and_chain_listeners_without_extra_mixed_port(tmp_path):
     state = _state(tmp_path, tun=True)
     text, _ = MihomoAdapter().generate_config(state)

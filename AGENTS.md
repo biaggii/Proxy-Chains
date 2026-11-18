@@ -63,7 +63,7 @@ Current implementations:
 | Adapter | Chain Field | Config Format |
 | :------ | :---------- | :------------ |
 | `SingBoxAdapter` | `detour` | JSON |
-| `XrayAdapter` | `proxySettings.tag` | JSON |
+| `XrayAdapter` | `streamSettings.sockopt.dialerProxy` | JSON |
 | `MihomoAdapter` | `dialer-proxy` | YAML |
 
 Chain outbound naming rule:

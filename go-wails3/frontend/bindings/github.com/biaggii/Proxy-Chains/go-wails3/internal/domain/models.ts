@@ -53,6 +53,7 @@ export interface Node {
     "tls": TLSOptions;
     "options"?: { [_ in string]?: string } | null;
     "sourceId"?: string;
+    "groupId"?: string;
     "tags"?: string[] | null;
     "sourceMetadataRef"?: string;
     "wgPublicKey"?: string;
@@ -62,6 +63,11 @@ export interface Node {
     "flow"?: string;
     "alterId"?: number;
     "alpn"?: string[] | null;
+}
+
+export interface NodeGroup {
+    "id": string;
+    "name": string;
 }
 
 export interface PortBinding {
@@ -151,6 +157,7 @@ export interface Transport {
 
 export interface Workspace {
     "schemaVersion": number;
+    "groups": NodeGroup[] | null;
     "subscriptions": Subscription[] | null;
     "nodes": Node[] | null;
     "chains": Chain[] | null;

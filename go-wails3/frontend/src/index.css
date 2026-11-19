@@ -259,3 +259,59 @@ button, input { font: inherit; }
     @apply font-sans;
   }
 }
+
+/* Node groups, native executable picker and two-column Chain builder. */
+.node-group-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.node-group-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.core-path-control { display: flex; align-items: center; gap: 8px; }
+.core-path-control > input { min-width: 0; flex: 1; }
+.group-manager-dialog { width: min(680px, calc(100vw - 36px)); max-width: 680px; }
+.group-create-row { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+.group-create-row > input { flex: 1; min-width: 0; }
+.group-manager-list { display: flex; flex-direction: column; gap: 8px; max-height: 48vh; overflow: auto; }
+.group-manager-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.group-empty { padding: 34px 16px; }
+.chain-editor-dialog { width: min(1040px, calc(100vw - 40px)); max-width: 1040px; max-height: min(90vh, 900px); padding: 26px; }
+.chain-name-port { display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 18px; align-items: end; margin-bottom: 22px; }
+.chain-name-port .form-label { margin: 0; }
+.chain-builder-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; }
+.chain-builder-column { display: flex; min-width: 0; flex-direction: column; }
+.chain-builder-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 26px; margin-bottom: 8px; }
+.chain-builder-heading strong { color: #35425a; font-size: 13px; font-weight: 680; }
+.chain-builder-heading span { color: #8b97aa; font-size: 10px; white-space: nowrap; }
+.chain-node-search { display: flex; align-items: center; gap: 8px; height: 36px; margin-bottom: 8px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; color: #8995a8; }
+.chain-node-search input { min-width: 0; border: 0; box-shadow: none; padding-left: 0; }
+.chain-node-list, .chain-hop-list { height: 360px; overflow: auto; border: 1px solid #dfe5ee; border-radius: 8px; background: #fff; }
+.chain-node-option, .chain-hop-option { display: flex; width: 100%; min-height: 48px; align-items: center; gap: 10px; padding: 8px 11px; border: 0; border-bottom: 1px solid #edf0f5; background: #fff; color: #445169; text-align: left; cursor: pointer; }
+.chain-node-option:last-child, .chain-hop-option:last-child { border-bottom: 0; }
+.chain-node-option:hover, .chain-hop-option:hover { background: #f7f9fc; }
+.chain-node-option[aria-selected="true"], .chain-hop-option[aria-selected="true"] { background: #eaf1fc; box-shadow: inset 3px 0 #4776bf; }
+.chain-node-name { display: block; overflow: hidden; color: #344158; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.chain-node-summary { display: block; overflow: hidden; margin-top: 3px; color: #8b97aa; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.chain-add-button { width: 100%; margin-top: 10px; }
+.chain-add-button svg { margin-left: 4px; }
+.chain-hop-option { min-height: 62px; }
+.chain-hop-number { display: grid; width: 26px; height: 26px; flex: 0 0 26px; place-items: center; border-radius: 7px; background: #edf3ff; color: #315da8; font-size: 11px; font-weight: 750; }
+.chain-hop-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 4px; }
+.chain-hop-copy strong { overflow: hidden; color: #344158; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.chain-hop-copy small { overflow: hidden; color: #8b97aa; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.chain-hop-role { color: #8995a8; font-size: 9px; font-weight: 750; letter-spacing: .08em; }
+.chain-hop-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; margin-top: 10px; }
+.chain-hop-actions button { min-width: 0; padding-inline: 8px; }
+.chain-list-empty { display: grid; min-height: 150px; place-items: center; padding: 24px; color: #929caf; font-size: 11px; text-align: center; }
+@media (max-width: 900px) {
+  .chain-editor-dialog { width: min(720px, calc(100vw - 28px)); padding: 18px; }
+  .chain-builder-grid { grid-template-columns: 1fr; }
+  .chain-node-list, .chain-hop-list { height: 240px; }
+}
+@media (max-width: 600px) {
+  .chain-name-port { grid-template-columns: 1fr; gap: 0; }
+  .chain-hop-actions { grid-template-columns: 1fr; }
+  .node-group-bar { align-items: flex-start; flex-direction: column; }
+  .group-create-row { align-items: stretch; flex-direction: column; }
+  .group-manager-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .group-manager-row button:last-child { grid-column: 2; }
+}
+.chain-editor-dialog { width: min(1160px, calc(100vw - 48px)); max-width: 1160px; max-height: min(92vh, 940px); }
+.chain-node-list, .chain-hop-list { height: 420px; }
+@media (max-width: 900px) { .chain-node-list, .chain-hop-list { height: 260px; } }

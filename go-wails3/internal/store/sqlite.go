@@ -15,9 +15,10 @@ import (
 type SQLiteStore struct{ db *sql.DB }
 
 type workspacePreferences struct {
-	Settings     domain.Settings   `json:"settings"`
-	ActiveNodeID string            `json:"activeNodeId,omitempty"`
-	TUN          domain.TUNBinding `json:"tun"`
+	Groups       []domain.NodeGroup `json:"groups,omitempty"`
+	Settings     domain.Settings    `json:"settings"`
+	ActiveNodeID string             `json:"activeNodeId,omitempty"`
+	TUN          domain.TUNBinding  `json:"tun"`
 }
 
 func OpenSQLite(path string) (*SQLiteStore, error) {
@@ -85,6 +86,10 @@ func (s *SQLiteStore) Load(ctx context.Context) (domain.Workspace, error) {
 			return w, fmt.Errorf("decode workspace settings: %w", err)
 		}
 		w.Settings, w.ActiveNodeID, w.TUN = preferences.Settings, preferences.ActiveNodeID, preferences.TUN
+		w.Groups = preferences.Groups
+		if w.Groups == nil {
+			w.Groups = []domain.NodeGroup{}
+		}
 	}
 	if err := loadRows(ctx, s.db, `SELECT payload FROM subscriptions ORDER BY rowid`, &w.Subscriptions); err != nil {
 		return w, err
@@ -135,7 +140,7 @@ func (s *SQLiteStore) Save(ctx context.Context, w domain.Workspace) error {
 			return err
 		}
 	}
-	settings, err := json.Marshal(workspacePreferences{Settings: w.Settings, ActiveNodeID: w.ActiveNodeID, TUN: w.TUN})
+	settings, err := json.Marshal(workspacePreferences{Groups: w.Groups, Settings: w.Settings, ActiveNodeID: w.ActiveNodeID, TUN: w.TUN})
 	if err != nil {
 		return err
 	}

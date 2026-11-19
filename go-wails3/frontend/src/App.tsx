@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ChainEditorDialog } from "@/components/chain-editor-dialog";
 import { NodeEditorDialog, type NodeEditorInput } from "@/components/node-editor-dialog";
+import { GroupManagerDialog } from "@/components/group-manager-dialog";
 import { SubscriptionEditorDialog } from "@/components/subscription-editor-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -28,6 +29,8 @@ function App() {
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
   const [editingNode,setEditingNode]=useState<Node|undefined>();
+  const [editingNodeCredentials,setEditingNodeCredentials]=useState<{username:string;password:string}>({username:"",password:""});
+  const [groupManagerOpen,setGroupManagerOpen]=useState(false);
   const [subscriptionManagerOpen,setSubscriptionManagerOpen]=useState(false);
   const [nodeContext,setNodeContext]=useState<{node:Node;x:number;y:number}|null>(null);
   const [chainContext,setChainContext]=useState<{chain:Chain;x:number;y:number}|null>(null);
@@ -61,13 +64,14 @@ function App() {
   const subscriptions = workspace?.subscriptions ?? [];
   const nodeGroups=useMemo(()=>[
     {id:"all",label:"All",count:nodes.length},
-    ...(nodes.some(node=>!node.sourceId)?[{id:"customs",label:"Customs",count:nodes.filter(node=>!node.sourceId).length}]:[]),
+    ...(nodes.some(node=>!node.sourceId&&!node.groupId)?[{id:"customs",label:"Customs",count:nodes.filter(node=>!node.sourceId&&!node.groupId).length}]:[]),
+    ...(workspace?.groups??[]).map(group=>({id:group.id,label:group.name,count:nodes.filter(node=>node.groupId===group.id).length})),
     ...subscriptions.map(subscription=>({id:subscription.id,label:subscription.name,count:nodes.filter(node=>node.sourceId===subscription.id).length})),
-  ],[nodes,subscriptions]);
+  ],[nodes,subscriptions,workspace?.groups]);
   const visibleNodes = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase();
     return nodes.filter(node=>{
-      const matchesGroup=selectedGroup==="all"||(selectedGroup==="customs"?!node.sourceId:node.sourceId===selectedGroup);
+      const matchesGroup=selectedGroup==="all"||(selectedGroup==="customs"?!node.sourceId&&!node.groupId:node.groupId===selectedGroup||node.sourceId===selectedGroup);
       const matchesQuery=!query||[node.name,node.server,node.protocol].some(value=>value.toLocaleLowerCase().includes(query));
       return matchesGroup&&matchesQuery;
     });
@@ -142,8 +146,8 @@ function App() {
   const saveNode = async (input: NodeEditorInput) => {
     try {
       const next = input.id
-        ? await WorkspaceService.UpdateNode({id:input.id,name:input.name,server:input.server,port:input.port,network:input.network,path:input.path,host:input.host,tls:input.tls,sni:input.sni})
-        : await WorkspaceService.CreateNode({name:input.name,protocol:input.protocol === "socks5" ? Protocol.ProtocolSOCKS5 : Protocol.ProtocolHTTP,server:input.server,port:input.port,username:input.username,password:input.password,uuid:"",tls:input.tls,sni:input.sni,network:input.network,path:input.path,host:input.host});
+        ? await WorkspaceService.UpdateNode({id:input.id,name:input.name,server:input.server,port:input.port,network:input.network,path:input.path,host:input.host,tls:input.tls,sni:input.sni,username:input.protocol==="socks5"||input.protocol==="http"?input.username:null,password:input.protocol==="socks5"||input.protocol==="http"?input.password:null,groupId:input.groupId})
+        : await WorkspaceService.CreateNode({name:input.name,protocol:input.protocol === "socks5" ? Protocol.ProtocolSOCKS5 : Protocol.ProtocolHTTP,server:input.server,port:input.port,username:input.username,password:input.password,uuid:"",tls:input.tls,sni:input.sni,network:input.network,path:input.path,host:input.host,groupId:input.groupId});
       setWorkspace(next);
       setActionError(null);
       setEditingNode(undefined);
@@ -153,7 +157,18 @@ function App() {
     }
   };
 
-  const openNodeEditor=(node?:Node)=>{setEditingNode(node);setNodeContext(null);setNodeEditorOpen(true)};
+  const openNodeEditor=async(node?:Node)=>{
+    setNodeContext(null);setEditingNode(node);setEditingNodeCredentials({username:"",password:""});
+    if(node&&(node.protocol==="socks5"||node.protocol==="http")){
+      try{const credentials=await WorkspaceService.GetNodeCredentials(node.id);setEditingNodeCredentials({username:credentials.username??"",password:credentials.password??""})}
+      catch(error){setActionError(error instanceof Error?error.message:String(error));return}
+    }
+    setNodeEditorOpen(true);
+  };
+
+  const createNodeGroup=async(name:string)=>{const next=await WorkspaceService.CreateNodeGroup(name);setWorkspace(next);const createdGroup=next.groups?.[next.groups.length-1];setSelectedGroup(createdGroup?.id??"all");setActionError(null)};
+  const renameNodeGroup=async(id:string,name:string)=>{setWorkspace(await WorkspaceService.RenameNodeGroup(id,name));setActionError(null)};
+  const deleteNodeGroup=async(id:string)=>{setWorkspace(await WorkspaceService.DeleteNodeGroup(id));if(selectedGroup===id)setSelectedGroup("all");setActionError(null)};
 
   const createSubscription=async(input:{name:string;url:string;userAgent:string;headers:Record<string,string>;updateMinutes:number})=>{
     try{setWorkspace(await WorkspaceService.CreateSubscription(input));setActionError(null)}catch(error){setActionError(error instanceof Error?error.message:String(error));throw error}
@@ -172,6 +187,12 @@ function App() {
     if(!settingsDraft)return;setSettingsBusy(true);
     try{const next=await WorkspaceService.UpdateSettings(settingsDraft);setWorkspace(next);setActionError(null)}
     catch(error){setActionError(error instanceof Error?error.message:String(error))}finally{setSettingsBusy(false)}
+  };
+
+  const browseCoreExecutable=async()=>{
+    if(!settingsDraft)return;
+    try{const coreName=settingsDraft.core.type.toLowerCase();const selectedPath=await WorkspaceService.PickCoreExecutable(coreName);if(!selectedPath)return;setSettingsDraft(current=>current?{...current,core:{...current.core,executables:{...(current.core.executables??{}),[coreName]:selectedPath}}}:current);setActionError(null)}
+    catch(error){setActionError(error instanceof Error?error.message:String(error))}
   };
 
   const toggleCore = async () => {
@@ -220,8 +241,8 @@ function App() {
                 <TabsList className="tabs-list"><TabsTrigger value="base" className="tab-trigger"><Network size={15} /> Base</TabsTrigger><TabsTrigger value="chain" className="tab-trigger"><Layers3 size={15} /> Chain</TabsTrigger></TabsList>
                 <TabsContent value="base" className="tab-panel">
                   <div className="panel-heading"><div><h2>Base Nodes</h2><p>Single-hop endpoints from manual entries and subscription sources.</p></div><div className="panel-tools"><div className="search-wrap"><Search size={15} /><Input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter by name, address or protocol" /></div>{nodes.length===0&&subscriptions.length===0&&<Button variant="outline" onClick={()=>void importLegacyState()}>Import Legacy State</Button>}<Button variant="outline" onClick={()=>setSubscriptionManagerOpen(true)}><Rss size={14}/> Subscriptions…</Button><Button onClick={() => openNodeEditor()}>Add Node</Button></div></div>
-                  <div className="node-group-bar" role="tablist" aria-label="Node groups">{nodeGroups.map(group=><button key={group.id} className={`group-chip ${selectedGroup===group.id?"active":""}`} onClick={()=>setSelectedGroup(group.id)} role="tab" aria-selected={selectedGroup===group.id}>{group.label}<span>{group.count}</span></button>)}</div>
-                  {loadError ? <div className="error-panel">Could not load workspace: {loadError}</div> : <Card className="table-card"><CardContent className="table-content"><Table className="data-table"><TableHeader><TableRow><TableHead>TYPE</TableHead><TableHead>REMARKS</TableHead><TableHead>ADDRESS</TableHead><TableHead>PORT</TableHead><TableHead>TRANSPORT</TableHead><TableHead>TLS</TableHead><TableHead>SUBSCRIPTION GROUP</TableHead><TableHead>ACTIVE</TableHead></TableRow></TableHeader><TableBody>{visibleNodes.map(node=>{const source=subscriptions.find(item=>item.id===node.sourceId);return <TableRow key={node.id} data-active={workspace?.activeNodeId===node.id} onClick={()=>void setActiveNode(node.id)} onDoubleClick={()=>openNodeEditor(node)} onContextMenu={event=>{event.preventDefault();setNodeContext({node,x:Math.min(event.clientX,window.innerWidth-220),y:Math.min(event.clientY,window.innerHeight-230)})}} className="node-data-row"><TableCell><span className="protocol-pill">{node.protocol}</span></TableCell><TableCell className="cell-strong">{node.name}</TableCell><TableCell className="mono">{node.server}</TableCell><TableCell className="mono">{node.port}</TableCell><TableCell>{node.transport?.network||"tcp"}</TableCell><TableCell>{node.tls?.enabled?"TLS":"—"}</TableCell><TableCell>{source?.name??(node.sourceId?"Unknown source":"Custom")}</TableCell><TableCell>{workspace?.activeNodeId===node.id?<span className="active-node-pill"><Check size={12}/> Active</span>:"—"}</TableCell></TableRow>})}</TableBody></Table>{visibleNodes.length===0&&<div className="empty-state"><div className="empty-icon"><Network size={22}/></div><strong>{filter?"No matching nodes":selectedGroup==="all"?"No Base Nodes yet":"This group has no nodes"}</strong><span>{filter?"Try a different search term.":"Add a node or import a subscription to get started."}</span></div>}</CardContent></Card>}
+                  <div className="node-group-bar" role="tablist" aria-label="Node groups"><div className="node-group-chips">{nodeGroups.map(group=><button key={group.id} className={`group-chip ${selectedGroup===group.id?"active":""}`} onClick={()=>setSelectedGroup(group.id)} role="tab" aria-selected={selectedGroup===group.id}>{group.label}<span>{group.count}</span></button>)}</div><Button size="sm" variant="outline" onClick={()=>setGroupManagerOpen(true)}><Plus size={14}/> Create Group</Button></div>
+                  {loadError ? <div className="error-panel">Could not load workspace: {loadError}</div> : <Card className="table-card"><CardContent className="table-content"><Table className="data-table"><TableHeader><TableRow><TableHead>TYPE</TableHead><TableHead>REMARKS</TableHead><TableHead>ADDRESS</TableHead><TableHead>PORT</TableHead><TableHead>TRANSPORT</TableHead><TableHead>TLS</TableHead><TableHead>GROUP / SOURCE</TableHead><TableHead>ACTIVE</TableHead></TableRow></TableHeader><TableBody>{visibleNodes.map(node=>{const source=subscriptions.find(item=>item.id===node.sourceId);const group=(workspace?.groups??[]).find(item=>item.id===node.groupId);const groupLabel=[group?.name,source?.name??(node.sourceId?"Unknown source":null)].filter(Boolean).join(" · ")||"Custom";return <TableRow key={node.id} data-active={workspace?.activeNodeId===node.id} onClick={()=>void setActiveNode(node.id)} onDoubleClick={()=>void openNodeEditor(node)} onContextMenu={event=>{event.preventDefault();setNodeContext({node,x:Math.min(event.clientX,window.innerWidth-220),y:Math.min(event.clientY,window.innerHeight-230)})}} className="node-data-row"><TableCell><span className="protocol-pill">{node.protocol}</span></TableCell><TableCell className="cell-strong">{node.name}</TableCell><TableCell className="mono">{node.server}</TableCell><TableCell className="mono">{node.port}</TableCell><TableCell>{node.transport?.network||"tcp"}</TableCell><TableCell>{node.tls?.enabled?"TLS":"—"}</TableCell><TableCell>{groupLabel}</TableCell><TableCell>{workspace?.activeNodeId===node.id?<span className="active-node-pill"><Check size={12}/> Active</span>:"—"}</TableCell></TableRow>})}</TableBody></Table>{visibleNodes.length===0&&<div className="empty-state"><div className="empty-icon"><Network size={22}/></div><strong>{filter?"No matching nodes":selectedGroup==="all"?"No Base Nodes yet":"This group has no nodes"}</strong><span>{filter?"Try a different search term.":"Add a node or import a subscription to get started."}</span></div>}</CardContent></Card>}
                 </TabsContent>
                 <TabsContent value="chain" className="tab-panel">
                   <div className="panel-heading"><div><h2>Chain Nodes</h2><p>Compose ordered routes. Each saved Chain owns one local listener.</p></div><Button onClick={() => { setEditingChain(undefined); setEditorOpen(true); }} disabled={nodes.length === 0}>Create Chain</Button></div>
@@ -236,7 +257,7 @@ function App() {
                 <div className="settings-grid">
                   <Card><CardHeader><CardTitle><SlidersHorizontal size={17}/> Core Engine</CardTitle></CardHeader><CardContent>
                     <label className="form-label">Selected core<Select value={settingsDraft.core.type} onValueChange={value=>setSettingsDraft({...settingsDraft,core:{...settingsDraft.core,type:String(value)}})}><SelectTrigger className="native-select"><SelectValue placeholder="Select core"/></SelectTrigger><SelectContent><SelectItem value="sing-box">sing-box</SelectItem><SelectItem value="xray">Xray</SelectItem><SelectItem value="mihomo">Mihomo</SelectItem></SelectContent></Select></label>
-                    <label className="form-label">Core executable path<Input value={(settingsDraft.core.executables??{})[settingsDraft.core.type.toLowerCase()]??""} onChange={e=>setSettingsDraft({...settingsDraft,core:{...settingsDraft.core,executables:{...(settingsDraft.core.executables??{}),[settingsDraft.core.type.toLowerCase()]:e.target.value}}})} placeholder="/usr/bin/sing-box"/></label>
+                    <label className="form-label">Core executable path<div className="core-path-control"><Input value={(settingsDraft.core.executables??{})[settingsDraft.core.type.toLowerCase()]??""} onChange={e=>setSettingsDraft({...settingsDraft,core:{...settingsDraft.core,executables:{...(settingsDraft.core.executables??{}),[settingsDraft.core.type.toLowerCase()]:e.target.value}}})} placeholder="/usr/bin/sing-box"/><Button type="button" variant="outline" onClick={()=>void browseCoreExecutable()} disabled={settingsBusy}>Browse…</Button></div></label>
                     <label className="form-label">Log level<Select value={settingsDraft.core.logLevel} onValueChange={value=>setSettingsDraft({...settingsDraft,core:{...settingsDraft.core,logLevel:String(value)}})}><SelectTrigger className="native-select"><SelectValue placeholder="Select log level"/></SelectTrigger><SelectContent><SelectItem value="trace">trace</SelectItem><SelectItem value="debug">debug</SelectItem><SelectItem value="info">info</SelectItem><SelectItem value="warning">warning</SelectItem><SelectItem value="error">error</SelectItem></SelectContent></Select></label>
                   </CardContent></Card>
                   <Card><CardHeader><CardTitle><Activity size={17}/> Shared Listener</CardTitle></CardHeader><CardContent>
@@ -285,7 +306,8 @@ function App() {
         <button onClick={()=>{setEditingChain(undefined);setEditorOpen(true);setChainContext(null)}}><Plus size={14}/> Create Chain</button>
       </div></div>}
       <ChainEditorDialog open={editorOpen} nodes={nodes} chain={editingChain} listenPort={editingChain ? (workspace?.portBindings ?? []).find((binding) => binding.chainId === editingChain.id)?.listenPort : undefined} onOpenChange={setEditorOpen} onSave={saveChain} />
-      <NodeEditorDialog open={nodeEditorOpen} node={editingNode} onOpenChange={open=>{setNodeEditorOpen(open);if(!open)setEditingNode(undefined)}} onSave={saveNode} />
+      <NodeEditorDialog open={nodeEditorOpen} node={editingNode} groups={workspace?.groups??[]} credentials={editingNodeCredentials} onOpenChange={open=>{setNodeEditorOpen(open);if(!open){setEditingNode(undefined);setEditingNodeCredentials({username:"",password:""})}}} onSave={saveNode} />
+      <GroupManagerDialog open={groupManagerOpen} groups={workspace?.groups??[]} onOpenChange={setGroupManagerOpen} onCreate={createNodeGroup} onRename={renameNodeGroup} onDelete={deleteNodeGroup}/>
       <SubscriptionEditorDialog open={subscriptionEditorOpen} onOpenChange={open=>{setSubscriptionEditorOpen(open);if(!open)setSubscriptionManagerOpen(true)}} onSave={createSubscription}/>
       <Dialog open={subscriptionManagerOpen} onOpenChange={setSubscriptionManagerOpen}>
         <DialogContent className="subscription-manager-dialog" showCloseButton>

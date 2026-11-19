@@ -106,3 +106,7 @@ The Go UI now has one Node Groups sidebar destination; Base Nodes has All/Custom
 The full chronological implementation record, architecture map, build/test commands, user-reported root causes, adapter routing invariants, verification boundaries and remaining acceptance work are now in [`GO-WAILS3-IMPLEMENTATION-HANDOVER.md`](GO-WAILS3-IMPLEMENTATION-HANDOVER.md). Read that file before continuing work under `go-wails3/`.
 
 Latest local-routing fix: all three Go core adapters now bypass localhost/loopback/private destinations before their per-listener Chain fallback. Mihomo listeners use named sub-rules instead of fixed proxy assignment. sing-box 1.14.4, Xray 26.11.9 and Mihomo config checks passed; local HTTP requests through each local proxy listener returned HTTP 200 for loopback targets. This does not certify ISP-blocked external-site reachability or privileged TUN traffic.
+
+## Go/Wails 3 UX follow-up — 2026-11-19
+
+The latest UI follow-up restores SOCKS5/HTTP username/password editing through on-demand OS credential-vault reads, adds a native Core Executable Browse dialog, adds user-managed custom Node Groups with node assignment, and replaces the single-column Chain picker with the Python-style two-column Available Nodes / ordered Chain Hops editor. Detailed behavior and verification are recorded in `GO-WAILS3-IMPLEMENTATION-HANDOVER.md`.

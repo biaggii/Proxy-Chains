@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ type WorkspaceService struct {
 	state                   domain.Workspace
 	secrets                 security.SecretStore
 	selectLegacyFile        func() (string, error)
+	selectExecutable        func(string) (string, error)
 	supervisor              *runtimecore.Supervisor
 	configDir               string
 	activeConfigPath        string
@@ -73,18 +75,27 @@ type CreateNodeInput struct {
 	Network  string          `json:"network,omitempty"`
 	Path     string          `json:"path,omitempty"`
 	Host     string          `json:"host,omitempty"`
+	GroupID  string          `json:"groupId,omitempty"`
 }
 
 type UpdateNodeInput struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Server  string `json:"server"`
-	Port    uint16 `json:"port"`
-	Network string `json:"network"`
-	Path    string `json:"path,omitempty"`
-	Host    string `json:"host,omitempty"`
-	TLS     bool   `json:"tls"`
-	SNI     string `json:"sni,omitempty"`
+	ID       string  `json:"id"`
+	Name     string  `json:"name"`
+	Server   string  `json:"server"`
+	Port     uint16  `json:"port"`
+	Network  string  `json:"network"`
+	Path     string  `json:"path,omitempty"`
+	Host     string  `json:"host,omitempty"`
+	TLS      bool    `json:"tls"`
+	SNI      string  `json:"sni,omitempty"`
+	Username *string `json:"username,omitempty"`
+	Password *string `json:"password,omitempty"`
+	GroupID  *string `json:"groupId,omitempty"`
+}
+
+type NodeCredentials struct {
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
 }
 
 func NewWorkspaceService() *WorkspaceService {
@@ -96,6 +107,10 @@ func NewWorkspaceServiceWithStore(ctx context.Context, store WorkspaceStore) (*W
 }
 
 func NewWorkspaceServiceWithDependencies(ctx context.Context, store WorkspaceStore, secrets security.SecretStore, selectFile func() (string, error), onRuntimeEvent func(runtimecore.Event)) (*WorkspaceService, error) {
+	return NewWorkspaceServiceWithPickers(ctx, store, secrets, selectFile, nil, onRuntimeEvent)
+}
+
+func NewWorkspaceServiceWithPickers(ctx context.Context, store WorkspaceStore, secrets security.SecretStore, selectFile func() (string, error), selectExecutable func(string) (string, error), onRuntimeEvent func(runtimecore.Event)) (*WorkspaceService, error) {
 	state, err := store.Load(ctx)
 	if err != nil {
 		return nil, err
@@ -111,7 +126,7 @@ func NewWorkspaceServiceWithDependencies(ctx context.Context, store WorkspaceSto
 		}
 		configDir = filepath.Join(base, "ChainPort Gateway", "runtime")
 	}
-	return &WorkspaceService{appContext: ctx, store: store, state: state, secrets: secrets, selectLegacyFile: selectFile, supervisor: runtimecore.NewSupervisor(onRuntimeEvent), configDir: configDir, refreshingSubscriptions: map[string]*subscriptionRefreshCall{}}, nil
+	return &WorkspaceService{appContext: ctx, store: store, state: state, secrets: secrets, selectLegacyFile: selectFile, selectExecutable: selectExecutable, supervisor: runtimecore.NewSupervisor(onRuntimeEvent), configDir: configDir, refreshingSubscriptions: map[string]*subscriptionRefreshCall{}}, nil
 }
 
 func (s *WorkspaceService) ImportLegacyStateFile() (migration.MigrationReport, error) {
@@ -208,6 +223,38 @@ func (s *WorkspaceService) SetCoreExecutable(coreName, path string) (domain.Work
 		candidate.Settings.Core.Executable[coreName] = path
 	}
 	return s.commit(candidate)
+}
+
+// PickCoreExecutable opens the platform file picker and returns a validated path for the Settings draft.
+func (s *WorkspaceService) PickCoreExecutable(coreName string) (string, error) {
+	s.mu.RLock()
+	picker := s.selectExecutable
+	s.mu.RUnlock()
+	if picker == nil {
+		return "", errors.New("core executable file picker is unavailable")
+	}
+	coreName = strings.ToLower(strings.TrimSpace(coreName))
+	if coreName != "sing-box" && coreName != "xray" && coreName != "mihomo" {
+		return "", fmt.Errorf("unsupported core %q", coreName)
+	}
+	path, err := picker(coreName)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(path) == "" {
+		return "", nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("inspect selected executable: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("selected core executable must be a file")
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
+		return "", errors.New("selected core file is not executable; grant execute permission first")
+	}
+	return path, nil
 }
 
 func (s *WorkspaceService) GetRuntimeStatus() runtimecore.Snapshot {
@@ -526,6 +573,7 @@ func (s *WorkspaceService) CreateNode(input CreateNodeInput) (domain.Workspace, 
 		ID: nodeID, Name: input.Name, Protocol: input.Protocol, Server: input.Server, Port: input.Port,
 		Credentials: domain.Credentials{UsernameRef: usernameRef, PasswordRef: passwordRef, UUIDRef: uuidRef},
 		Transport:   domain.Transport{Network: network, Path: input.Path, Host: input.Host}, TLS: domain.TLSOptions{Enabled: input.TLS, SNI: input.SNI},
+		GroupID: input.GroupID,
 	})
 	result, err := s.commit(candidate)
 	if err != nil && s.secrets != nil {
@@ -536,7 +584,41 @@ func (s *WorkspaceService) CreateNode(input CreateNodeInput) (domain.Workspace, 
 	return result, err
 }
 
-// UpdateNode edits public node metadata without exposing or rewriting credentials.
+// GetNodeCredentials reads only the username/password fields requested by the node editor.
+// Secret values are never included in Workspace snapshots or persisted in SQLite.
+func (s *WorkspaceService) GetNodeCredentials(nodeID string) (NodeCredentials, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, node := range s.state.Nodes {
+		if node.ID != nodeID {
+			continue
+		}
+		credentials := NodeCredentials{}
+		if node.Credentials.UsernameRef == "" && node.Credentials.PasswordRef == "" {
+			return credentials, nil
+		}
+		if s.secrets == nil || !s.secrets.Available() {
+			return credentials, security.ErrUnavailable
+		}
+		var err error
+		if node.Credentials.UsernameRef != "" {
+			credentials.Username, err = s.secrets.Get(context.Background(), node.Credentials.UsernameRef)
+			if err != nil {
+				return NodeCredentials{}, fmt.Errorf("read stored username: %w", err)
+			}
+		}
+		if node.Credentials.PasswordRef != "" {
+			credentials.Password, err = s.secrets.Get(context.Background(), node.Credentials.PasswordRef)
+			if err != nil {
+				return NodeCredentials{}, fmt.Errorf("read stored password: %w", err)
+			}
+		}
+		return credentials, nil
+	}
+	return NodeCredentials{}, fmt.Errorf("Base Node %q does not exist", nodeID)
+}
+
+// UpdateNode edits public metadata and optionally replaces username/password vault entries.
 func (s *WorkspaceService) UpdateNode(input UpdateNodeInput) (domain.Workspace, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -559,9 +641,142 @@ func (s *WorkspaceService) UpdateNode(input UpdateNodeInput) (domain.Workspace, 
 		node.Transport.Host = input.Host
 		node.TLS.Enabled = input.TLS
 		node.TLS.SNI = input.SNI
-		return s.commit(candidate)
+		if input.GroupID != nil {
+			node.GroupID = *input.GroupID
+		}
+		newRefs := []string{}
+		oldRefs := []string{}
+		replace := func(value *string, currentRef string) (string, error) {
+			if value == nil {
+				return currentRef, nil
+			}
+			if currentRef != "" {
+				if s.secrets == nil || !s.secrets.Available() {
+					return "", security.ErrUnavailable
+				}
+				current, err := s.secrets.Get(context.Background(), currentRef)
+				if err != nil {
+					return "", fmt.Errorf("read existing credential before update: %w", err)
+				}
+				if current == *value {
+					return currentRef, nil
+				}
+			}
+			if *value == "" {
+				if currentRef != "" {
+					oldRefs = append(oldRefs, currentRef)
+				}
+				return "", nil
+			}
+			if s.secrets == nil || !s.secrets.Available() {
+				return "", security.ErrUnavailable
+			}
+			ref, err := newID()
+			if err != nil {
+				return "", err
+			}
+			if err := s.secrets.Put(context.Background(), ref, *value); err != nil {
+				return "", err
+			}
+			newRefs = append(newRefs, ref)
+			if currentRef != "" {
+				oldRefs = append(oldRefs, currentRef)
+			}
+			return ref, nil
+		}
+		usernameRef, err := replace(input.Username, node.Credentials.UsernameRef)
+		if err != nil {
+			return domain.Workspace{}, err
+		}
+		passwordRef, err := replace(input.Password, node.Credentials.PasswordRef)
+		if err != nil {
+			for _, ref := range newRefs {
+				_ = s.secrets.Delete(context.Background(), ref)
+			}
+			return domain.Workspace{}, err
+		}
+		node.Credentials.UsernameRef, node.Credentials.PasswordRef = usernameRef, passwordRef
+		result, err := s.commit(candidate)
+		if err != nil {
+			for _, ref := range newRefs {
+				_ = s.secrets.Delete(context.Background(), ref)
+			}
+			return domain.Workspace{}, err
+		}
+		for _, ref := range oldRefs {
+			_ = s.secrets.Delete(context.Background(), ref)
+		}
+		return result, nil
 	}
 	return domain.Workspace{}, fmt.Errorf("Base Node %q does not exist", input.ID)
+}
+
+func (s *WorkspaceService) CreateNodeGroup(name string) (domain.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return domain.Workspace{}, errors.New("group name is required")
+	}
+	candidate := cloneWorkspace(s.state)
+	for _, group := range candidate.Groups {
+		if strings.EqualFold(group.Name, name) {
+			return domain.Workspace{}, fmt.Errorf("group %q already exists", name)
+		}
+	}
+	id, err := newID()
+	if err != nil {
+		return domain.Workspace{}, err
+	}
+	candidate.Groups = append(candidate.Groups, domain.NodeGroup{ID: id, Name: name})
+	return s.commit(candidate)
+}
+
+func (s *WorkspaceService) RenameNodeGroup(id, name string) (domain.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return domain.Workspace{}, errors.New("group name is required")
+	}
+	candidate := cloneWorkspace(s.state)
+	for i := range candidate.Groups {
+		if candidate.Groups[i].ID != id && strings.EqualFold(candidate.Groups[i].Name, name) {
+			return domain.Workspace{}, fmt.Errorf("group %q already exists", name)
+		}
+	}
+	for i := range candidate.Groups {
+		if candidate.Groups[i].ID == id {
+			candidate.Groups[i].Name = name
+			return s.commit(candidate)
+		}
+	}
+	return domain.Workspace{}, fmt.Errorf("group %q does not exist", id)
+}
+
+func (s *WorkspaceService) DeleteNodeGroup(id string) (domain.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	candidate := cloneWorkspace(s.state)
+	found := false
+	groups := candidate.Groups[:0]
+	for _, group := range candidate.Groups {
+		if group.ID == id {
+			found = true
+			continue
+		}
+		groups = append(groups, group)
+	}
+	if !found {
+		return domain.Workspace{}, fmt.Errorf("group %q does not exist", id)
+	}
+	candidate.Groups = groups
+	for i := range candidate.Nodes {
+		if candidate.Nodes[i].GroupID == id {
+			candidate.Nodes[i].GroupID = ""
+		}
+	}
+	return s.commit(candidate)
 }
 
 func (s *WorkspaceService) DeleteNode(nodeID string) (domain.Workspace, error) {

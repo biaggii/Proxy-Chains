@@ -54,6 +54,7 @@ type Node struct {
 	TLS               TLSOptions        `json:"tls"`
 	Options           map[string]string `json:"options,omitempty"`
 	SourceID          string            `json:"sourceId,omitempty"`
+	GroupID           string            `json:"groupId,omitempty"`
 	Tags              []string          `json:"tags,omitempty"`
 	SourceMetadataRef string            `json:"sourceMetadataRef,omitempty"`
 	WGPublicKey       string            `json:"wgPublicKey,omitempty"`
@@ -63,6 +64,11 @@ type Node struct {
 	Flow              string            `json:"flow,omitempty"`
 	AlterID           int               `json:"alterId,omitempty"`
 	ALPN              []string          `json:"alpn,omitempty"`
+}
+
+type NodeGroup struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type Subscription struct {
@@ -151,6 +157,7 @@ type Settings struct {
 
 type Workspace struct {
 	SchemaVersion int            `json:"schemaVersion"`
+	Groups        []NodeGroup    `json:"groups"`
 	Subscriptions []Subscription `json:"subscriptions"`
 	Nodes         []Node         `json:"nodes"`
 	Chains        []Chain        `json:"chains"`
@@ -163,7 +170,7 @@ type Workspace struct {
 func DefaultWorkspace() Workspace {
 	return Workspace{
 		SchemaVersion: 1,
-		Subscriptions: []Subscription{}, Nodes: []Node{}, Chains: []Chain{}, PortBindings: []PortBinding{},
+		Groups:        []NodeGroup{}, Subscriptions: []Subscription{}, Nodes: []Node{}, Chains: []Chain{}, PortBindings: []PortBinding{},
 		TUN: TUNBinding{Kind: TUNBindingNone},
 		Settings: Settings{
 			BaseListenHost: "127.0.0.1", BaseListenPort: 10808,
@@ -247,6 +254,18 @@ func (w Workspace) Validate() error {
 		}
 		subscriptionIDs[subscription.ID] = true
 	}
+	groupIDs := make(map[string]bool, len(w.Groups))
+	groupNames := make(map[string]bool, len(w.Groups))
+	for _, group := range w.Groups {
+		name := strings.ToLower(strings.TrimSpace(group.Name))
+		if strings.TrimSpace(group.ID) == "" || name == "" {
+			return errors.New("node group ID and name are required")
+		}
+		if groupIDs[group.ID] || groupNames[name] {
+			return fmt.Errorf("duplicate node group ID or name %q", group.Name)
+		}
+		groupIDs[group.ID], groupNames[name] = true, true
+	}
 
 	nodes := make(map[string]Node, len(w.Nodes))
 	for _, node := range w.Nodes {
@@ -266,6 +285,9 @@ func (w Workspace) Validate() error {
 		}
 		if strings.TrimSpace(node.Server) == "" || node.Port == 0 {
 			return fmt.Errorf("node %q has an invalid endpoint", node.ID)
+		}
+		if node.GroupID != "" && !groupIDs[node.GroupID] {
+			return fmt.Errorf("node %q references missing group %q", node.ID, node.GroupID)
 		}
 		nodes[node.ID] = node
 	}

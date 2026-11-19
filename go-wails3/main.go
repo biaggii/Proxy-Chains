@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/biaggii/Proxy-Chains/go-wails3/internal/autostart"
 	runtimecore "github.com/biaggii/Proxy-Chains/go-wails3/internal/runtime"
@@ -37,11 +38,22 @@ func main() {
 	appContext, cancelApp := context.WithCancel(context.Background())
 	defer cancelApp()
 	var app *application.App
-	workspaceService, err := service.NewWorkspaceServiceWithDependencies(appContext, database, secretStore, func() (string, error) {
+	workspaceService, err := service.NewWorkspaceServiceWithPickers(appContext, database, secretStore, func() (string, error) {
 		if app == nil {
 			return "", nil
 		}
 		return app.Dialog.OpenFile().SetTitle("Import ChainPort state.json").AddFilter("ChainPort state.json", "state.json;*.json").PromptForSingleSelection()
+	}, func(coreName string) (string, error) {
+		if app == nil {
+			return "", nil
+		}
+		dialog := app.Dialog.OpenFile().SetTitle("Select " + coreName + " executable")
+		if runtime.GOOS == "windows" {
+			dialog.AddFilter("Executable files", "*.exe;*.EXE")
+		} else {
+			dialog.AddFilter("Executable files", "*")
+		}
+		return dialog.PromptForSingleSelection()
 	}, func(event runtimecore.Event) {
 		if app != nil {
 			app.Event.Emit("core:runtime", event)

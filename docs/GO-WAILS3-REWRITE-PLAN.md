@@ -484,3 +484,11 @@ Keep this branch separate from `main` until the rewrite's acceptance gates are m
 - `0.0.0.0` is a wildcard bind address; clients should connect to local services via `127.0.0.1` or `localhost`. `0.0.0.0/8` is also DIRECT-routed for compatibility with clients that send wildcard-address URLs.
 - Regression tests cover sing-box, Xray and Mihomo rule ordering and fallback. Config validation passed with installed sing-box 1.14.4, Xray 26.11.9 and Mihomo. Runtime HTTP tests through local proxy listeners returned HTTP 200 for IPv4 loopback and localhost in all three cores, wildcard IPv4 and IPv6 loopback in sing-box. Temporary test configs and servers were removed.
 - Full handover and verification details: [`GO-WAILS3-IMPLEMENTATION-HANDOVER.md`](GO-WAILS3-IMPLEMENTATION-HANDOVER.md).
+
+## 2026-11-19 UX follow-up
+
+- The Go SOCKS5/HTTP node editor now retrieves username/password on demand from the OS credential vault and supports replacing/clearing them without persisting plaintext in Workspace or SQLite. Other protocols' secret fields remain protected.
+- Custom node groups are stored in workspace preferences and assigned with `Node.GroupID`, independently of subscription `SourceID`. The Base view supports group creation, rename, deletion and assignment.
+- Core executable selection now has a native Wails Browse dialog and validates the selected file (including executable permission on Unix).
+- The Chain editor now uses two columns: searchable available Base Nodes and ordered Chain Hops, with Add, Remove, Move Up and Move Down. Hop order remains Entry-to-Exit and is submitted unchanged to the existing Chain service.
+- See `GO-WAILS3-IMPLEMENTATION-HANDOVER.md` for exact behavior, credential lifecycle and verification commands.

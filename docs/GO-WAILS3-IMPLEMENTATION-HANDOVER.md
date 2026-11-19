@@ -81,7 +81,7 @@ The frontend package manager is pnpm. Use the committed lockfile and `pnpm insta
 
 ### Safe node editing
 
-WorkspaceService.UpdateNode changes public node metadata (name, server, port, transport, TLS and SNI). It preserves protocol and every existing credential-vault reference. The frontend editor does not read or display imported node secrets. Manual creation currently supports SOCKS5 and HTTP; do not imply that it is a complete editor for all imported protocols.
+WorkspaceService.UpdateNode changes public node metadata and custom group assignment. It preserves protocol and all credential-vault references unless the SOCKS5/HTTP editor explicitly submits replacement values. The editor reads only username/password on demand from the OS credential vault; no plaintext credentials enter Workspace snapshots or SQLite. Other protocol credentials are not exposed by this editor. Manual creation currently supports SOCKS5 and HTTP; do not imply that it is a complete editor for all imported protocols.
 
 ## 5. User-reported bug fixes and root causes
 
@@ -171,3 +171,10 @@ Still not certified:
 4. Keep Python as the behavior reference and compare the corresponding Python adapter before changing Go routing semantics.
 5. Do not add real subscription URLs, tokens, core configs, state databases, logs or credentials to Git.
 6. Do not describe config validation as successful live proxy traffic. State exactly which layer was tested.
+
+## 2026-11-19 UX follow-up
+
+- The SOCKS5/HTTP node editor now loads username/password on demand through `GetNodeCredentials`, which reads only those values from the OS credential vault. Workspace snapshots and SQLite still contain only opaque references. When edited, changed values are written to new vault references before old references are deleted; empty submitted fields clear a credential, while null/omitted fields preserve it. Other protocols' credentials remain protected and are not exposed by this editor.
+- `Workspace.Groups` stores user-created `NodeGroup` records in the workspace preferences payload; `Node.GroupID` assigns a node to one custom group. This is additive to `Node.SourceID`: subscription groups remain source-managed. The Base view shows All, ungrouped Customs, custom groups and subscription groups. Groups can be created, renamed and deleted; deleting a custom group clears node assignments but does not delete nodes or subscriptions.
+- Core Engine executable path has a Browse button wired to Wails' native file picker. The selected path is checked for a regular file and, on Unix, executable permission, then placed in the Settings draft. Save Settings persists it; cancelling the picker leaves the draft unchanged.
+- Chain Create/Edit now follows the Python two-column pattern: searchable Available Base Nodes on the left, ordered Chain Hops on the right, Add, Remove, Move Up and Move Down controls, plus name and local listener port fields. Double-clicking an available node also adds it. The right column order is the actual Entry-to-Exit order used by config generation.

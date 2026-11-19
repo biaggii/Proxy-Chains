@@ -12,6 +12,7 @@ export type {
     Credentials,
     NetworkSettings,
     Node,
+    NodeGroup,
     PortBinding,
     Settings,
     Subscription,

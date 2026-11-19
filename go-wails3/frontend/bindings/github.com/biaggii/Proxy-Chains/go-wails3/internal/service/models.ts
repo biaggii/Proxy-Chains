@@ -24,6 +24,7 @@ export interface CreateNodeInput {
     "network"?: string;
     "path"?: string;
     "host"?: string;
+    "groupId"?: string;
 }
 
 export interface CreateSubscriptionInput {
@@ -32,6 +33,11 @@ export interface CreateSubscriptionInput {
     "userAgent"?: string;
     "headers"?: { [_ in string]?: string } | null;
     "updateMinutes": number;
+}
+
+export interface NodeCredentials {
+    "username"?: string;
+    "password"?: string;
 }
 
 export interface UpdateChainInput {
@@ -51,4 +57,7 @@ export interface UpdateNodeInput {
     "host"?: string;
     "tls": boolean;
     "sni"?: string;
+    "username"?: string | null;
+    "password"?: string | null;
+    "groupId"?: string | null;
 }

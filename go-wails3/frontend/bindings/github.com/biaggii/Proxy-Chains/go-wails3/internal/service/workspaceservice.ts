@@ -43,6 +43,10 @@ export function CreateNode(input: $models.CreateNodeInput): $CancellablePromise<
     return $Call.ByID(2349376785, input);
 }
 
+export function CreateNodeGroup(name: string): $CancellablePromise<domain$0.Workspace> {
+    return $Call.ByID(3770822088, name);
+}
+
 export function CreateSubscription(input: $models.CreateSubscriptionInput): $CancellablePromise<domain$0.Workspace> {
     return $Call.ByID(2651799224, input);
 }
@@ -55,8 +59,20 @@ export function DeleteNode(nodeID: string): $CancellablePromise<domain$0.Workspa
     return $Call.ByID(3787831594, nodeID);
 }
 
+export function DeleteNodeGroup(id: string): $CancellablePromise<domain$0.Workspace> {
+    return $Call.ByID(701266749, id);
+}
+
 export function DeleteSubscription(id: string): $CancellablePromise<domain$0.Workspace> {
     return $Call.ByID(3270074515, id);
+}
+
+/**
+ * GetNodeCredentials reads only the username/password fields requested by the node editor.
+ * Secret values are never included in Workspace snapshots or persisted in SQLite.
+ */
+export function GetNodeCredentials(nodeID: string): $CancellablePromise<$models.NodeCredentials> {
+    return $Call.ByID(3977125331, nodeID);
 }
 
 export function GetRuntimeLogs(): $CancellablePromise<string[] | null> {
@@ -75,12 +91,23 @@ export function ImportLegacyStateFile(): $CancellablePromise<migration$0.Migrati
     return $Call.ByID(548160950);
 }
 
+/**
+ * PickCoreExecutable opens the platform file picker and returns a validated path for the Settings draft.
+ */
+export function PickCoreExecutable(coreName: string): $CancellablePromise<string> {
+    return $Call.ByID(3724236635, coreName);
+}
+
 export function RefreshAllSubscriptions(): $CancellablePromise<[domain$0.Workspace, string[] | null]> {
     return $Call.ByID(2965895015);
 }
 
 export function RefreshSubscription(id: string): $CancellablePromise<domain$0.Workspace> {
     return $Call.ByID(36393809, id);
+}
+
+export function RenameNodeGroup(id: string, name: string): $CancellablePromise<domain$0.Workspace> {
+    return $Call.ByID(1769570494, id, name);
 }
 
 export function SetActiveBaseNode(nodeID: string): $CancellablePromise<domain$0.Workspace> {
@@ -116,7 +143,7 @@ export function UpdateChain(input: $models.UpdateChainInput): $CancellablePromis
 }
 
 /**
- * UpdateNode edits public node metadata without exposing or rewriting credentials.
+ * UpdateNode edits public metadata and optionally replaces username/password vault entries.
  */
 export function UpdateNode(input: $models.UpdateNodeInput): $CancellablePromise<domain$0.Workspace> {
     return $Call.ByID(2615998468, input);

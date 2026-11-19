@@ -10,6 +10,7 @@ export type {
     CreateChainInput,
     CreateNodeInput,
     CreateSubscriptionInput,
+    NodeCredentials,
     UpdateChainInput,
     UpdateNodeInput
 } from "./models.js";

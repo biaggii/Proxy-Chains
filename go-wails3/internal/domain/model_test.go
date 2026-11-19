@@ -51,3 +51,21 @@ func TestValidateRejectsMalformedXrayFragmentRanges(t *testing.T) {
 		t.Fatal("negative fragment delay should fail validation")
 	}
 }
+
+func TestValidateRequiresUniqueNodeGroupsAndValidAssignments(t *testing.T) {
+	w := DefaultWorkspace()
+	w.Groups = []NodeGroup{{ID: "group-a", Name: "Work"}, {ID: "group-b", Name: "Personal"}}
+	w.Nodes = []Node{{ID: "node", Name: "Node", Protocol: ProtocolSOCKS5, Server: "localhost", Port: 1080, GroupID: "group-a"}}
+	if err := w.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	w.Groups = append(w.Groups, NodeGroup{ID: "group-c", Name: "work"})
+	if err := w.Validate(); err == nil {
+		t.Fatal("expected case-insensitive duplicate group name to fail")
+	}
+	w.Groups = w.Groups[:2]
+	w.Nodes[0].GroupID = "missing"
+	if err := w.Validate(); err == nil {
+		t.Fatal("expected dangling node group assignment to fail")
+	}
+}

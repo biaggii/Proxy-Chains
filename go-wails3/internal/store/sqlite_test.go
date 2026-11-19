@@ -16,6 +16,8 @@ func TestSQLiteRoundTripAndPortUniqueness(t *testing.T) {
 	defer s.Close()
 	w := domain.DefaultWorkspace()
 	w.Nodes = []domain.Node{{ID: "node-a", Name: "Entry", Protocol: domain.ProtocolSOCKS5, Server: "127.0.0.1", Port: 1080, Transport: domain.Transport{Network: "tcp"}}}
+	w.Groups = []domain.NodeGroup{{ID: "group-a", Name: "Work"}}
+	w.Nodes[0].GroupID = "group-a"
 	w.Chains = []domain.Chain{{ID: "chain-a", Name: "Route", HopNodeIDs: []string{"node-a"}}}
 	w.PortBindings = []domain.PortBinding{{ID: "binding-a", ChainID: "chain-a", ListenHost: "127.0.0.1", ListenPort: 20001}}
 	w.ActiveNodeID = "node-a"
@@ -27,7 +29,7 @@ func TestSQLiteRoundTripAndPortUniqueness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Nodes) != 1 || len(got.Chains) != 1 || len(got.PortBindings) != 1 {
+	if len(got.Nodes) != 1 || len(got.Chains) != 1 || len(got.PortBindings) != 1 || len(got.Groups) != 1 || got.Nodes[0].GroupID != "group-a" {
 		t.Fatalf("unexpected loaded workspace: %+v", got)
 	}
 	if got.PortBindings[0].ListenPort != 20001 || got.ActiveNodeID != "node-a" || got.TUN.Kind != domain.TUNBindingChain || got.TUN.TargetID != "chain-a" {

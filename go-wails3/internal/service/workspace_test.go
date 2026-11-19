@@ -79,7 +79,8 @@ func TestCreateNodePersistsWithoutPlaintextCredentials(t *testing.T) {
 func TestUpdateNodeEditsMetadataWithoutExposingOrReplacingVaultCredentials(t *testing.T) {
 	secrets := subscriptionSecrets{"node-password": "kept-secret"}
 	w := domain.DefaultWorkspace()
-	w.Nodes = []domain.Node{{ID: "node-1", Name: "Old", Protocol: domain.ProtocolVLESS, Server: "old.example", Port: 443, Credentials: domain.Credentials{PasswordRef: "node-password"}, Transport: domain.Transport{Network: "tcp"}}}
+	w.Groups = []domain.NodeGroup{{ID: "group-1", Name: "Work"}}
+	w.Nodes = []domain.Node{{ID: "node-1", Name: "Old", Protocol: domain.ProtocolVLESS, Server: "old.example", Port: 443, GroupID: "group-1", Credentials: domain.Credentials{PasswordRef: "node-password"}, Transport: domain.Transport{Network: "tcp"}}}
 	service, err := NewWorkspaceServiceWithDependencies(context.Background(), &memoryStore{workspace: w}, secrets, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -89,11 +90,110 @@ func TestUpdateNodeEditsMetadataWithoutExposingOrReplacingVaultCredentials(t *te
 		t.Fatal(err)
 	}
 	node := updated.Nodes[0]
-	if node.Name != "Renamed" || node.Server != "new.example" || node.Port != 8443 || node.Protocol != domain.ProtocolVLESS || node.Credentials.PasswordRef != "node-password" || node.Transport.Network != "ws" || node.Transport.Path != "/proxy" || !node.TLS.Enabled || node.TLS.SNI != "cdn.example" {
+	if node.Name != "Renamed" || node.Server != "new.example" || node.Port != 8443 || node.Protocol != domain.ProtocolVLESS || node.GroupID != "group-1" || node.Credentials.PasswordRef != "node-password" || node.Transport.Network != "ws" || node.Transport.Path != "/proxy" || !node.TLS.Enabled || node.TLS.SNI != "cdn.example" {
 		t.Fatalf("node metadata update lost or changed protected fields: %+v", node)
 	}
 	if secrets["node-password"] != "kept-secret" {
 		t.Fatal("updating node metadata changed its vault credential")
+	}
+}
+
+func TestNodeEditorCanReadAndReplaceSOCKSCredentialsInVault(t *testing.T) {
+	secrets := subscriptionSecrets{"node-user": "old-user", "node-password": "old-password"}
+	w := domain.DefaultWorkspace()
+	w.Nodes = []domain.Node{{ID: "node-1", Name: "SOCKS", Protocol: domain.ProtocolSOCKS5, Server: "proxy.example", Port: 1080, Credentials: domain.Credentials{UsernameRef: "node-user", PasswordRef: "node-password"}}}
+	service, err := NewWorkspaceServiceWithDependencies(context.Background(), &memoryStore{workspace: w}, secrets, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := service.GetNodeCredentials("node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credentials.Username != "old-user" || credentials.Password != "old-password" {
+		t.Fatalf("editor did not receive saved credentials: %+v", credentials)
+	}
+	username, password := "new-user", "new-password"
+	updated, err := service.UpdateNode(UpdateNodeInput{ID: "node-1", Name: "SOCKS", Server: "proxy.example", Port: 1080, Network: "tcp", Username: &username, Password: &password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := updated.Nodes[0]
+	if node.Credentials.UsernameRef == "node-user" || node.Credentials.PasswordRef == "node-password" {
+		t.Fatal("updated credentials did not receive new vault references")
+	}
+	if secrets[node.Credentials.UsernameRef] != username || secrets[node.Credentials.PasswordRef] != password {
+		t.Fatal("new credential values were not stored in the vault")
+	}
+	if _, ok := secrets["node-user"]; ok {
+		t.Fatal("replaced username secret was not deleted")
+	}
+	if _, ok := secrets["node-password"]; ok {
+		t.Fatal("replaced password secret was not deleted")
+	}
+}
+
+func TestNodeGroupCRUDAndAssignment(t *testing.T) {
+	w := domain.DefaultWorkspace()
+	w.Nodes = []domain.Node{{ID: "node-1", Name: "Node", Protocol: domain.ProtocolSOCKS5, Server: "localhost", Port: 1080}}
+	service, err := NewWorkspaceServiceWithStore(context.Background(), &memoryStore{workspace: w})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := service.CreateNodeGroup("Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupID := created.Groups[0].ID
+	if _, err := service.CreateNodeGroup("work"); err == nil {
+		t.Fatal("expected case-insensitive duplicate group rejection")
+	}
+	updated, err := service.UpdateNode(UpdateNodeInput{ID: "node-1", Name: "Node", Server: "localhost", Port: 1080, Network: "tcp", GroupID: &groupID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Nodes[0].GroupID != groupID {
+		t.Fatal("node was not assigned to the new group")
+	}
+	renamed, err := service.RenameNodeGroup(groupID, "Work Nodes")
+	if err != nil || renamed.Groups[0].Name != "Work Nodes" {
+		t.Fatalf("group rename failed: %+v %v", renamed, err)
+	}
+	deleted, err := service.DeleteNodeGroup(groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted.Groups) != 0 || deleted.Nodes[0].GroupID != "" {
+		t.Fatalf("group deletion did not clear node assignments: %+v", deleted)
+	}
+}
+
+func TestPickCoreExecutableUsesNativePickerAndPersistsSelection(t *testing.T) {
+	w := domain.DefaultWorkspace()
+	executable := filepath.Join(t.TempDir(), "sing-box")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewWorkspaceServiceWithPickers(context.Background(), &memoryStore{workspace: w}, nil, nil, func(core string) (string, error) {
+		if core != "sing-box" {
+			t.Fatalf("unexpected core picker: %s", core)
+		}
+		return executable, nil
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := service.PickCoreExecutable("sing-box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected != executable {
+		t.Fatalf("unexpected selected executable: %q", selected)
+	}
+	service.selectExecutable = func(string) (string, error) { return "", nil }
+	cancelled, err := service.PickCoreExecutable("sing-box")
+	if err != nil || cancelled != "" {
+		t.Fatal("cancelling the picker returned a selected path")
 	}
 }
 

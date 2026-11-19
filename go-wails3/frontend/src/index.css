@@ -315,3 +315,50 @@ button, input { font: inherit; }
 .chain-editor-dialog { width: min(1160px, calc(100vw - 48px)); max-width: 1160px; max-height: min(92vh, 940px); }
 .chain-node-list, .chain-hop-list { height: 420px; }
 @media (max-width: 900px) { .chain-node-list, .chain-hop-list { height: 260px; } }
+
+/* Compact icon-only workspace navigation. */
+.workspace-layout { grid-template-columns: 64px minmax(0, 1fr); }
+.sidebar { align-items: center; gap: 7px; padding: 18px 8px 14px; }
+.nav-item { width: 44px; height: 44px; justify-content: center; padding: 0; margin: 0; border-radius: 10px; }
+.sidebar-footer { width: 100%; justify-content: center; padding: 12px 0 0; }
+.sidebar-footer-icon { width: 34px; height: 34px; }
+@media (max-width: 1150px) {
+  .workspace-layout { grid-template-columns: 64px minmax(0, 1fr); }
+  .sidebar { padding-inline: 8px; }
+}
+
+/* Node editor stays fully inside the window and can be dragged by its title bar. */
+.node-editor-dialog {
+  display: block;
+  left: 50%;
+  top: 50%;
+  width: min(640px, calc(100vw - 48px));
+  max-width: 640px;
+  max-height: calc(100dvh - 48px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 24px;
+  overscroll-behavior: contain;
+}
+.node-editor-drag-handle { align-items: center; cursor: move; user-select: none; touch-action: none; }
+.node-editor-heading-actions { display: flex; align-items: center; gap: 8px; }
+.node-editor-grip { color: #9aa5b5; cursor: grab; }
+.node-editor-drag-handle:active .node-editor-grip { cursor: grabbing; }
+.node-endpoint-grid { grid-template-columns: minmax(0, 1fr) 132px; }
+.node-credentials-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.password-control { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.password-control > input { min-width: 0; flex: 1; }
+.password-control > button { flex: 0 0 32px; }
+.node-advanced-options { margin-top: 15px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfe; }
+.node-advanced-options > summary { padding: 11px 13px; color: #526078; font-size: 12px; font-weight: 650; cursor: pointer; }
+.node-advanced-content { padding: 0 13px 12px; }
+.node-advanced-content .form-label { margin: 10px 0; }
+.node-advanced-content .setting-toggle { min-height: 36px; }
+.node-delete-action { color: #bd4141; }
+.node-delete-action:hover { background: #fff0f0; color: #bd4141; }
+.data-table th:last-child, .data-table td:last-child { white-space: nowrap; }
+@media (max-width: 760px) {
+  .node-editor-dialog { width: calc(100vw - 32px); max-height: calc(100dvh - 32px); padding: 18px; }
+  .node-credentials-grid { grid-template-columns: 1fr; gap: 0; }
+  .node-endpoint-grid { grid-template-columns: minmax(0, 1fr) 112px; }
+}

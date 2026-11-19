@@ -110,3 +110,7 @@ Latest local-routing fix: all three Go core adapters now bypass localhost/loopba
 ## Go/Wails 3 UX follow-up — 2026-11-19
 
 The latest UI follow-up restores SOCKS5/HTTP username/password editing through on-demand OS credential-vault reads, adds a native Core Executable Browse dialog, adds user-managed custom Node Groups with node assignment, and replaces the single-column Chain picker with the Python-style two-column Available Nodes / ordered Chain Hops editor. Detailed behavior and verification are recorded in `GO-WAILS3-IMPLEMENTATION-HANDOVER.md`.
+
+## Go/Wails 3 node editor follow-up — 2026-11-19
+
+The shared Node Add/Edit dialog now supports SOCKS5, HTTP and HTTPS (HTTP + TLS), password show/hide/copy, collapsible advanced transport/TLS options, viewport-clamped centering and drag movement. Custom group chips have right-click Add Node/Rename/Delete actions; node rows expose Edit/Delete and right-click actions. Sidebar navigation is icon-only. See the implementation handover for exact behavior and tests.

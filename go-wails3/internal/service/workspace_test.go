@@ -76,6 +76,48 @@ func TestCreateNodePersistsWithoutPlaintextCredentials(t *testing.T) {
 	}
 }
 
+func TestCreateHTTPSNodeStoresHTTPProtocolWithTLS(t *testing.T) {
+	store := &memoryStore{workspace: domain.DefaultWorkspace()}
+	service, err := NewWorkspaceServiceWithStore(context.Background(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := service.CreateNode(CreateNodeInput{Name: "HTTPS proxy", Protocol: domain.ProtocolHTTP, Server: "proxy.example", Port: 8443, TLS: true, SNI: "proxy.example", Insecure: false, ALPN: []string{"h2", "http/1.1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := created.Nodes[0]
+	if node.Protocol != domain.ProtocolHTTP || !node.TLS.Enabled || node.TLS.SNI != "proxy.example" || len(node.TLS.ALPN) != 2 || node.TLS.ALPN[0] != "h2" {
+		t.Fatalf("HTTPS proxy was not persisted as HTTP with TLS: %+v", node)
+	}
+}
+
+func TestUpdateManualNodeCanSwitchHTTPAndHTTPS(t *testing.T) {
+	w := domain.DefaultWorkspace()
+	w.Nodes = []domain.Node{{ID: "node", Name: "Proxy", Protocol: domain.ProtocolHTTP, Server: "proxy.example", Port: 8080, Transport: domain.Transport{Network: "tcp"}}}
+	service, err := NewWorkspaceServiceWithStore(context.Background(), &memoryStore{workspace: w})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpsProtocol := domain.ProtocolHTTP
+	updated, err := service.UpdateNode(UpdateNodeInput{ID: "node", Name: "Proxy", Server: "proxy.example", Port: 8443, Network: "tcp", Protocol: &httpsProtocol, TLS: true, SNI: "proxy.example", Insecure: true, ALPN: []string{"h2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := updated.Nodes[0]
+	if node.Protocol != domain.ProtocolHTTP || !node.TLS.Enabled || !node.TLS.Insecure || node.TLS.SNI != "proxy.example" || len(node.TLS.ALPN) != 1 || node.TLS.ALPN[0] != "h2" {
+		t.Fatalf("HTTPS node update was not saved: %+v", node)
+	}
+	plainProtocol := domain.ProtocolSOCKS5
+	updated, err = service.UpdateNode(UpdateNodeInput{ID: "node", Name: "Proxy", Server: "proxy.example", Port: 1080, Network: "tcp", Protocol: &plainProtocol, TLS: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Nodes[0].Protocol != domain.ProtocolSOCKS5 || updated.Nodes[0].TLS.Enabled {
+		t.Fatalf("node protocol was not switched to SOCKS5: %+v", updated.Nodes[0])
+	}
+}
+
 func TestUpdateNodeEditsMetadataWithoutExposingOrReplacingVaultCredentials(t *testing.T) {
 	secrets := subscriptionSecrets{"node-password": "kept-secret"}
 	w := domain.DefaultWorkspace()

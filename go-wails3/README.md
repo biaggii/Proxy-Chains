@@ -74,3 +74,5 @@ wails3 build
 ```
 
 All listed commands passed. Windows `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -exec=/bin/true ./...` passed; the internal packages also cross-compiled for macOS arm64. A macOS Wails app build was not verified because Wails requires CGO and the Linux host has no macOS toolchain. The Linux binary remained running during an 8-second GUI smoke window. The application config directory and SQLite database were observed with modes `0700` and `0600`, respectively. These checks do not establish live proxy connectivity, real TUN packet flow, or release packaging parity.
+
+The shared Node Add/Edit dialog supports SOCKS5, HTTP and HTTPS (HTTP + TLS), vault-backed credential editing, password reveal/copy, and collapsible transport/TLS options. Custom group chips and node rows support context-menu management; the sidebar is icon-only. See `../docs/GO-WAILS3-IMPLEMENTATION-HANDOVER.md` for implementation details.

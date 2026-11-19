@@ -20,6 +20,8 @@ export interface CreateNodeInput {
     "password"?: string;
     "uuid"?: string;
     "tls": boolean;
+    "insecure"?: boolean;
+    "alpn"?: string[] | null;
     "sni"?: string;
     "network"?: string;
     "path"?: string;
@@ -57,6 +59,9 @@ export interface UpdateNodeInput {
     "host"?: string;
     "tls": boolean;
     "sni"?: string;
+    "protocol"?: domain$0.Protocol | null;
+    "insecure"?: boolean;
+    "alpn"?: string[] | null;
     "username"?: string | null;
     "password"?: string | null;
     "groupId"?: string | null;

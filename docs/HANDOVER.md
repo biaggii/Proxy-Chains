@@ -95,7 +95,7 @@ Verification on the current Linux host: `go test ./...`, `go test -race ./...`, 
 2. Validate generated configurations using pinned sing-box, Xray and Mihomo binaries, then fix differences before claiming adapter parity.
 3. Run real Base/Chain traffic, UDP, DNS, crash-recovery and startup-timeout tests; exercise privileged TUN packet flow and teardown on each OS.
 4. Complete tray, Windows/macOS packaging/signing, export-with-secrets and secret-safe diagnostics.
-5. Review the complete uncommitted worktree and commit the Go rewrite in small vertical slices. Keep the Python baseline untouched.
+5. Continue implementation and integration acceptance on the pushed `rewrite/go-wails3` branch; keep the Python baseline untouched.
 
 ## 2026-11-19 UI parity pass
 

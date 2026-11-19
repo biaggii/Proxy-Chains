@@ -1,6 +1,6 @@
 # ChainPort Go + Wails v3 Rewrite Plan
 
-**Status:** Architecture assessment and handover baseline; no Go rewrite has been started.
+**Status:** Go rewrite is underway on `rewrite/go-wails3`; Python remains the production reference.
 **Assessment date:** 2026-11-18
 **Current production branch:** `main` (Python / PySide6)
 **Proposed stack:** Go + Wails v3 + React + TypeScript + Vite + pnpm + shadcn/ui.
@@ -187,6 +187,32 @@ Expose user-level operations, not low-level mutable structs:
 - `RuntimeService`: preflight, generate config, validate, start, stop, restart, get runtime status, tail logs.
 - `SettingsService`: read/update settings and core executable paths.
 - `ImportExportService`: import legacy `state.json`, export profiles, report migration warnings.
+
+## 2026-11-19 bug-fix investigation
+
+- Subscription deletion now clears `ActiveNodeID` and a direct Base-Node TUN binding when the deleted feed owned that node. If a Chain still references a feed node, the node is detached from the feed and retained so the Chain remains valid. A regression test covers the active/TUN-bound deletion case.
+- Runtime Logs now include ChainPort startup/configuration-validation diagnostics as well as child stdout/stderr. Core preflight output is retained (with credential redaction) instead of being discarded. Regression coverage verifies that application diagnostics are stored, emitted and redacted. Wails v3's official Events API requires matching event names and a frontend listener; this project uses `core:runtime` on both sides.
+- Legacy import now also reads the older `auto_update_interval` subscription field when `update_interval` is absent, matching the Python model's backward-compatible `from_dict` behavior.
+- The exact failing legacy file and exact Start error from the user's machine have not been supplied. Do not claim the import/run issue is fully resolved until that file (with secrets redacted) is tested against the importer and the migrated workspace is started with the same core version.
+- The user's Start screenshot exposed `outbounds[2].plugin: unknown field "plugin"`. Reproducing the supplied C69 feed against the current bundled sing-box 1.14.4 showed a concrete generator bug: Go's `map[key]` returns a nil interface for an absent `plugin`, and comparing that interface to the empty string is true. The adapter consequently emitted a bogus `plugin` field for ordinary VMess/VLESS/Trojan/SS/SOCKS/HTTP nodes. Both sing-box and Mihomo adapters now use a nil-safe string accessor. A regression test asserts that non-plugin nodes do not receive a `plugin` key.
+- Running the same real feed through sing-box 1.14.4 then exposed the next schema issue: since sing-box 1.14, domain-name proxy endpoints require `route.default_domain_resolver` or per-outbound `domain_resolver`. The generated route now sets `default_domain_resolver: "local_dns"`, using the configured bootstrap resolver for proxy-server hostnames. This follows the official Dial Fields and migration docs.
+- The exact C69 URL was fetched with the application's configured default User-Agent (`v2rayN/7 ChainPort-Gateway`). The endpoint returned HTTP 200, `application/octet-stream`, a standard-base64 body of 23,824 bytes, and 85 links (4 VMess, 51 Shadowsocks, 30 VLESS). The Go refresh path parsed all 85 with zero parse errors. Generated sing-box configs for each of the 85 nodes passed the bundled sing-box 1.14.4 `check` command after the two adapter fixes. A request without that User-Agent returned a 5-byte `error` body; a generic Mozilla User-Agent returned HTTP 403. The app's existing v2rayN User-Agent default is therefore material and must not be removed.
+- The screenshot's `already being refreshed` error came from the service rejecting overlapping refresh calls. Calls for the same subscription now coalesce: later callers wait for the in-flight refresh and receive its result rather than failing. A concurrency regression test asserts one HTTP request and identical successful workspace results. Subscription payload detection also accepts URL-safe/unpadded base64 and UTF-8 BOMs.
+- Core start diagnostics now record the resolved executable path and its reported version, and surface the redacted core validation output in the Start error instead of only `exit status 1`. The user's selected binary path/version still needs to be checked in their environment; the tested bundled binary here is sing-box 1.14.4.
+- Follow-up runtime output from the user's machine showed `DNS server not found: hosts`. An initial tag interpretation was incorrect and has been superseded by the actual sing-box 1.14.4 variant test recorded below: the working Python-compatible form uses the `hosts_dns` server tag for both `server` and `preferred_by`; `preferred_by: hosts` reproduces the user's startup error.
+- The user's 2026-11-19 browser screenshot showed `PR_END_OF_FILE_ERROR` on `missav.live` and reported the same ISP-blocked-site regression for `laowang.vip`, which the Python app had previously handled. A direct source comparison found that Python `SingBoxAdapter.generate_config` adds a route-level `action: route-options, tls_record_fragment: true` rule (scoped to `protocol: ["tls"]` when sniffing is enabled), plus sniff and DNS-hijack front rules. Go had only set `tls.fragment` and `tls.record_fragment` on the proxy server's own TLS outbound; it did not fragment the destination TLS ClientHello inside the proxied traffic. This was the functional regression. Go now emits the same route-level rule/order as Python when `EnableFinalFragment` is on, and the same sniff/DNS-hijack rules for mixed inbound traffic.
+- The same comparison found Go's DNS bootstrap had diverged from Python: it omitted `direct_dns`, used the bootstrap resolver directly for the DoH hostname, and used different `hosts`/`preferred_by` tags. Go now matches the Python three-stage setup (`local_dns` literal bootstrap, `direct_dns` resolved through `local_dns`, `hosts_dns` static DoH host mapping), routes DoH hostname resolution through `hosts_dns`, and uses `route.default_domain_resolver: {server: "direct_dns", strategy: ...}`. The bundled sing-box 1.14.4 runtime was used to test the tag combinations: `server=hosts_dns, preferred_by=hosts_dns` starts; `preferred_by=hosts` reproduces `DNS server not found: hosts`.
+- Regression tests now assert the route-level TLS record-fragment rule, rule ordering, DNS hijack/sniff behavior, and Python-compatible DNS resolver chain. The generated two-hop Chain config with TLS fragmentation, final TLS record fragmentation, sniffing and QUIC blocking passed sing-box 1.14.4 `check` and a four-second real foreground `run` smoke test. This proves config acceptance and successful core initialization; it does not yet prove the user's ISP/site path works from their own network.
+
+## 2026-11-19 UI parity pass
+
+- Removed the separate Subscriptions sidebar destination. Subscription groups now live in the Node Groups/Base workspace as All, Customs (only when manual nodes exist), and one filter chip per subscription ID. Node source labels resolve from the subscription ID rather than displaying the opaque ID.
+- Added a Subscription Groups dialog to the Base Nodes view, with Add Subscription, Refresh All, per-feed Update/Pause/Resume/Delete, node counts and update status. This follows the Python BaseNodesPage pattern (`group_tabs` plus `Subscriptions…`) and the supplied v2rayN screenshots.
+- Base Node rows now show protocol, remarks, address, port, transport, TLS, subscription group and active state. Single-click selects the active Base Node; double-click opens Edit; right-click offers active selection, TUN binding, Edit, Remove and Create Node.
+- Chain rows now support double-click Edit and right-click Edit, Bind TUN, Remove and Create Chain, matching the Python ChainsPage context-menu behavior.
+- Added a backend `UpdateNode` operation that edits non-secret node metadata while preserving protocol and all credential-vault references. The editor deliberately does not reveal stored credentials. Regression test verifies protocol and vault secret references survive metadata edits.
+- Moved Save Settings from the bottom of the long Settings page into the Settings heading at the top.
+- Verification for this UI pass: Go tests and race tests, `go vet`, Wails TypeScript binding generation, frontend TypeScript/Vite production build, Wails Linux build and `git diff --check` passed.
 
 Wails methods should return typed results/errors. Long-running work (subscription update, connectivity checks, core start/stop) should emit typed progress/state events instead of blocking a frontend call. Keep the backend authoritative; frontend state is a projection, not a second source of truth.
 
@@ -393,3 +419,68 @@ The following results were recorded against the current checkout after reviewing
 **Manual verification still required:** restart the application from this working tree and inspect both headings at the intended minimum window size; create a Chain with a custom port; edit it to another free port; confirm the Base port and other Chain ports do not change; start successfully and confirm Logs stays closed; then open Logs manually and verify output is present. Test a failed start and confirm it also leaves Logs closed. Privileged TUN and each OS packaging path require separate integration testing.
 
 **Version research correction:** Wails' status page still describes the v3.0.0 desktop compatibility contract, while the official changelog records v3.1.0 as released on 2026-11-01 and v3.2.0 nightly previews in November. Pin the stable v3.1.0 line and re-check the changelog immediately before implementation. pnpm 12 is the current line; the official compatibility table lists Node 24 as supported. The locally observed pnpm 12.15.0 / Node 24.22.1 pair is therefore a reasonable reproducible starting point, not a permanent compatibility guarantee.
+
+## 16. Go rewrite implementation status (branch `rewrite/go-wails3`)
+
+The parallel implementation has started under [`../go-wails3/`](../go-wails3/). The Python application on `main` remains the reference implementation. This is an incremental vertical slice, not feature parity and not a replacement release.
+
+### Implemented in the current rewrite branch
+
+- Wails v3.1.0 app shell, React 18 + TypeScript strict mode + Vite 8, pnpm 12.15.0, Tailwind CSS v4, Radix primitives, Lucide and source-owned shadcn-style Button/Card/Input components.
+- Typed Go domain models for subscriptions, protocol nodes, ordered Chains, local port bindings, TUN target and settings. Credential values are represented as references, not plaintext fields.
+- SQLite schema v1, transactional workspace writes, foreign-key and unique-port constraints, private database file permissions, and workspace read/write tests.
+- OS credential vault integration through `github.com/go-keyring/keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service; unavailable stores fail closed without a plaintext fallback).
+- Legacy `state.json` importer: subscription URLs, HTTP header values, node credentials, WireGuard private keys and runtime-used protocol `extra` metadata move into the OS credential vault. `extra` is gzip-compressed to reduce credential-vault item size and is resolved only in backend code. Debug-only `raw_dict` is deliberately omitted and reported as a warning. Legacy Chain wrapper nodes are expanded into ordered canonical Chain records. The original source file is never deleted or overwritten. Import refuses to run over a non-empty new workspace and rolls back secrets if validation fails.
+- Legacy migration preserves ordered multi-hop Chains, full-Chain TUN selection, active Base Node, subscription metadata, node source association, port mappings and settings. Missing Chain ports are allocated with collision checks and reported as warnings.
+- Go services for manual node creation, Base selection, Chain create/edit/delete, port allocation/collision validation, TUN target selection, subscription CRUD/refresh/update scheduling, stale-node reconciliation and core process lifecycle.
+- URI and Clash YAML parsers for VMess, VLESS, Trojan, Shadowsocks, SOCKS5, HTTP and WireGuard, with credentials and source metadata stored in the OS vault.
+- sing-box, Xray and Mihomo config generators with ordered chains, core-specific DNS, QUIC, TLS/REALITY, fragmentation and TUN config generation. Xray native TUN is rejected explicitly rather than silently ignored.
+- Process supervisor with bounded/redacted logs, config validation command, Start/Stop and atomic private config writes; per-OS autorun and TUN privilege preflight.
+- Frontend Base / Chain / subscription / Settings / Logs views, active-node selection, manual SOCKS5/HTTP entry, Chain editor with hop reordering and editable local port, TUN target configuration, subscription management and runtime controls.
+- Wails-generated TypeScript bindings; production Linux binary builds successfully in the current Ubuntu 26.04 / GTK4 / WebKitGTK 6.0 environment.
+
+### Current test/build snapshot
+
+Run in `go-wails3/`:
+
+```bash
+go test ./...
+go test -race ./...
+go vet ./...
+wails3 generate bindings -i -ts
+cd frontend && pnpm install --frozen-lockfile && pnpm run typecheck && pnpm run build
+cd .. && wails3 build
+```
+
+The current verification pass reports `go test ./...`, `go test -race ./...`, `go vet ./...`, frontend TypeScript/production build and `wails3 build` all passing. Windows package cross-compilation passed with `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -exec=/bin/true ./...`; internal packages cross-compiled for macOS arm64. The complete macOS Wails app was not cross-built because Wails requires CGO and no macOS toolchain is available on the Linux host. The compiled Linux binary remained running during an 8-second GUI smoke window and created its SQLite database with directory mode `0700` and database file mode `0600`. These checks do not establish live proxy connectivity, privileged TUN packet flow, or signed installer behavior.
+
+### Not implemented or not yet certified — do not present as working features
+
+- golden config parity against sanitized Python/v2rayN fixtures and validation against pinned live core binaries;
+- live traffic tests through Base and each Chain, unexpected process-exit recovery, startup timeout, and core-version/capability detection;
+- actual privileged TUN packet-flow tests and OS-specific interface cleanup (config generation and Linux privilege preflight are not end-to-end TUN support);
+- tray integration and Windows/macOS app builds, signed installers and packaging validation;
+- complete manual editors for VMess/VLESS/Trojan/Shadowsocks/WireGuard (manual creation currently supports SOCKS5 and HTTP; imported feed protocols are parsed);
+- profile export, secret-safe support bundle, full import preview/dry-run and comprehensive error recovery.
+
+The official shadcn initializer's remote preset endpoint timed out during this session. `components.json`, Tailwind v4/Vite integration and locally owned Radix-based source components are present; do not claim the remote CLI initialization completed. Re-run the shadcn CLI when its registry endpoint is reachable, then compare generated config before replacing the source-owned components.
+
+### Next implementation order
+
+1. Capture sanitized Python/v2rayN config goldens and run generated configs through the exact supported sing-box/Xray/Mihomo binary versions.
+2. Fix adapter differences exposed by those fixtures; explicitly gate unsupported transport/protocol/core combinations rather than dropping fields.
+3. Exercise real Base/Chain traffic, crash recovery, start timeout, DNS routing and UDP behavior on Linux; then add Windows/macOS CI and desktop smoke coverage.
+4. Complete TUN privilege acquisition, interface lifecycle and packet-flow tests per OS; keep Xray TUN unsupported unless an external bridge is implemented.
+5. Add export/import preview, secret-safe diagnostics, complete protocol editors, tray integration and signed packaging.
+
+Keep this branch separate from `main` until the rewrite's acceptance gates are met. Commit in small vertical slices; do not merge a UI-only preview as a replacement for the Python product.
+
+## 2026-11-19 local destination routing regression
+
+- The user's browser test used `0.0.0.0:1234` and failed with `ERR_EMPTY_RESPONSE`; the report identified missing localhost/127.0.0.1 bypass. The Go sing-box generator previously placed private/loopback bypass only inside the TUN branch. With TUN disabled, the normal mixed inbound sent every destination to its configured Base/Chain outbound, including local services.
+- sing-box now adds global local-destination DIRECT rules before per-inbound Chain routing: `domain_suffix: localhost`, explicit IPv4/IPv6 loopback and unspecified ranges, and `ip_is_private`. The rules apply with TUN on or off. TUN process-loop prevention remains a separate rule.
+- Xray now adds `full:localhost` and explicit local/private CIDR DIRECT rules before listener Chain rules. Explicit CIDRs are used instead of `geoip:private` because the Go runner does not configure `XRAY_LOCATION_ASSET`; this avoids requiring a missing geoip.dat file.
+- Mihomo listeners no longer use a fixed `proxy` field. Each listener uses a named `rule` sub-rule containing localhost/loopback/private DIRECT rules, optional QUIC rejection, and a final MATCH to that listener's selected Chain. This is required because a non-empty listener `proxy` forces that proxy and skips listener rule evaluation. Mihomo TUN rules use the same local bypass list.
+- `0.0.0.0` is a wildcard bind address; clients should connect to local services via `127.0.0.1` or `localhost`. `0.0.0.0/8` is also DIRECT-routed for compatibility with clients that send wildcard-address URLs.
+- Regression tests cover sing-box, Xray and Mihomo rule ordering and fallback. Config validation passed with installed sing-box 1.14.4, Xray 26.11.9 and Mihomo. Runtime HTTP tests through local proxy listeners returned HTTP 200 for IPv4 loopback and localhost in all three cores, wildcard IPv4 and IPv6 loopback in sing-box. Temporary test configs and servers were removed.
+- Full handover and verification details: [`GO-WAILS3-IMPLEMENTATION-HANDOVER.md`](GO-WAILS3-IMPLEMENTATION-HANDOVER.md).

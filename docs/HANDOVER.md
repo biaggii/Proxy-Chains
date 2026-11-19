@@ -1,8 +1,10 @@
 # ChainPort Gateway — Developer Handover
 
-**Last reviewed:** 2026-11-18
-**Current branch:** `main`
+**Last reviewed:** 2026-11-19
+**Current branch:** `rewrite/go-wails3`
 **Review baseline commit:** `4b35386` (`fix: align Xray routing and fragmentation with v2rayN`)
+
+**Python handover commit:** `790a35b` (`feat: finish chain UI and rewrite handover`), pushed to `origin/main` on 2026-11-18. The parallel Go rewrite is being developed on `rewrite/go-wails3`; see [`../go-wails3/README.md`](../go-wails3/README.md) and section 16 of the rewrite plan.
 
 ## Start here
 
@@ -51,7 +53,7 @@ These checks do not replace a manual start/stop test with the actual installed c
 
 The proposed next-generation stack is **Go + Wails v3 + React + TypeScript + Vite + pnpm + shadcn/ui**. Keep sing-box and Xray as external core processes; decide Mihomo's status explicitly. Build the new app alongside Python, import legacy `state.json`, and do not remove the Python implementation until parity and migration gates pass.
 
-The rewrite plan is the specification for Go domain/service boundaries and typed Wails APIs/events; SQLite migrations and legacy JSON import/export; subscription parser parity and protocol capability checks; core config golden tests and process supervision; frontend feature structure and shadcn-owned components; TUN, secrets, platform integration and staged rollout.
+The rewrite plan is the specification for Go domain/service boundaries and typed Wails APIs/events; SQLite migrations and legacy JSON import; subscription parser parity and protocol capability checks; core config golden tests and process supervision; frontend feature structure and source-owned components; TUN, secrets, platform integration and staged rollout.
 
 ## Known cleanup candidates
 
@@ -66,10 +68,41 @@ Do not delete active subscription updates, custom HTTP headers/User-Agent, URI/v
 - New support bundles and logs must redact credentials, tokens and private keys.
 - Keep explicit user confirmation for exports that include secrets.
 
+## Go rewrite status — 2026-11-19
+
+The parallel implementation under [`../go-wails3/`](../go-wails3/) now includes the typed domain, SQLite persistence, OS keyring, legacy importer, URI/Clash parsers, subscription refresh/scheduler, sing-box/Xray/Mihomo config generators, process supervisor, Linux TUN privilege preflight, per-OS autorun and the React Base/Chain/Subscriptions/Settings/Logs interface. The Python application remains the production reference; do not replace it or merge the preview as feature parity.
+
+Verification on the current Linux host: `go test ./...`, `go test -race ./...`, `go vet ./...`, `wails3 generate bindings -i -ts`, frontend production build and `wails3 build` passed. Windows Go package cross-compilation passed; internal packages cross-compiled for macOS arm64. Full macOS Wails build, signed packages, live core validation/traffic and privileged TUN packet flow remain unverified. The Linux binary stayed running during an 8-second GUI smoke window; config directory/database permissions were `0700`/`0600`.
+
+### 2026-11-19 user-reported regressions
+
+- Legacy import now migrates both `core_exe_paths` and the older singular `core_exe_path` when the path exists on the current OS. Cross-platform or unavailable paths are ignored with a migration warning. It also supports the older subscription `auto_update_interval` field.
+- Subscription deletion clears active-node and direct-node TUN references when those nodes are removed. Nodes still referenced by a Chain remain detached from the deleted feed.
+- Runtime Logs now retain application startup errors and core config-validation output in addition to child stdout/stderr, with secret redaction.
+- Regression tests added for these cases. `go test ./...`, `go test -race ./...`, `go vet ./...`, frontend build, binding generation and Wails Linux build passed after these changes.
+- The user's exact failing historical JSON and the resulting core error have not yet been reproduced. Request a redacted copy plus selected core/version and exact error before calling legacy import/run fully fixed.
+- The supplied Start screenshot was reproduced against the real C69 feed: a nil-interface comparison emitted a `plugin` key for ordinary nodes. Both sing-box and Mihomo adapters now omit absent plugin metadata. sing-box 1.14 also requires a default/per-outbound domain resolver for domain-name proxy servers; `route.default_domain_resolver: local_dns` is now generated.
+- The C69 endpoint was tested using the app's default `v2rayN/7 ChainPort-Gateway` User-Agent: 85 links were returned and parsed (4 VMess, 51 Shadowsocks, 30 VLESS), zero parse errors; each of the 85 generated sing-box profiles passed the bundled sing-box 1.14.4 `check` command after the fixes. Without the v2rayN User-Agent the endpoint returned a 5-byte `error` response; a generic browser User-Agent returned HTTP 403.
+- Concurrent manual/scheduled refreshes for the same subscription now share one in-flight request. Base64URL and BOM payload handling were added. Runtime diagnostics now include the actual executable path/version and validation output.
+- The user's subsequent process log exposed a second-stage sing-box 1.14.4 DNS startup failure: `DNS server not found: hosts`. An initial tag interpretation was incorrect; a runtime matrix against sing-box 1.14.4 showed that the working Python-compatible form uses the `hosts_dns` server tag for both `server` and `preferred_by`. The `preferred_by: hosts` variant reproduces the user's startup error.
+- The user's latest Firefox screenshot showed `PR_END_OF_FILE_ERROR` on `missav.live` and reported ISP-blocked `laowang.vip` access failing in Go although the Python implementation worked. Python source comparison identified the missing feature: its sing-box generator adds route-level `tls_record_fragment` for destination TLS traffic (and sniff/DNS-hijack rules); Go only fragmented the proxy outbound's own TLS connection. Go now emits the same route-level TLS record-fragment rule and rule ordering. DNS bootstrap was also brought back in line with Python (`local_dns` -> `direct_dns`, `hosts_dns` static mappings, DoH hostname resolved via `hosts_dns`, `default_domain_resolver` via `direct_dns`). Runtime test of sing-box 1.14.4 confirms `preferred_by=hosts_dns` is the working tag form; `preferred_by=hosts` reproduces the prior DNS startup error.
+- Added tests for final TLS record fragmentation, sniffing/DNS hijack, QUIC rule order and DNS bootstrap. A representative two-hop Chain config with fragmentation enabled passed sing-box 1.14.4 `check` and a four-second real foreground run. Actual access to `missav.live`/`laowang.vip` from the user's ISP remains to be retested after they rebuild; the local smoke test is not a live-site connectivity claim.
+- Latest verification after this pass: `go test ./...`, `go test -race ./...`, `go vet ./...`, frontend build and `wails3 build` passed. The C69 live endpoint test was temporary and removed; no subscription URL or node credentials were added to repository fixtures.
+
 ## Suggested next steps
 
-1. Re-run the verification commands and complete the manual UI checklist in the rewrite plan.
-2. Review and approve the current uncommitted diff; create a clean, tagged Python baseline.
-3. Capture sanitized legacy state fixtures and core config goldens.
-4. Finalize protocol scope, secret migration and Linux minimum distribution.
-5. Start the Go domain/importer and tests before building the Wails frontend.
+1. Capture sanitized golden configs from the Python implementation and v2rayN for Base, 2-hop/3-hop Chains, DNS, fragmentation, QUIC and TUN.
+2. Validate generated configurations using pinned sing-box, Xray and Mihomo binaries, then fix differences before claiming adapter parity.
+3. Run real Base/Chain traffic, UDP, DNS, crash-recovery and startup-timeout tests; exercise privileged TUN packet flow and teardown on each OS.
+4. Complete tray, Windows/macOS packaging/signing, export-with-secrets and secret-safe diagnostics.
+5. Review the complete uncommitted worktree and commit the Go rewrite in small vertical slices. Keep the Python baseline untouched.
+
+## 2026-11-19 UI parity pass
+
+The Go UI now has one Node Groups sidebar destination; Base Nodes has All/Customs/subscription-ID group chips and a Subscription Groups manager dialog. Base rows follow the v2rayN columns and support single-click active selection, double-click Edit and right-click actions. Chain rows support double-click and right-click Edit/Remove/Bind TUN/Create. Node editing changes public metadata only and keeps credential vault references hidden/preserved. Settings Save is now in the top page heading. Full Go/race/vet, bindings, frontend build, Wails Linux build and diff checks passed after this pass.
+
+## Go/Wails 3 implementation handover — 2026-11-19
+
+The full chronological implementation record, architecture map, build/test commands, user-reported root causes, adapter routing invariants, verification boundaries and remaining acceptance work are now in [`GO-WAILS3-IMPLEMENTATION-HANDOVER.md`](GO-WAILS3-IMPLEMENTATION-HANDOVER.md). Read that file before continuing work under `go-wails3/`.
+
+Latest local-routing fix: all three Go core adapters now bypass localhost/loopback/private destinations before their per-listener Chain fallback. Mihomo listeners use named sub-rules instead of fixed proxy assignment. sing-box 1.14.4, Xray 26.11.9 and Mihomo config checks passed; local HTTP requests through each local proxy listener returned HTTP 200 for loopback targets. This does not certify ISP-blocked external-site reachability or privileged TUN traffic.

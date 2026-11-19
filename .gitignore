@@ -1,10 +1,14 @@
-# ============================================================
-# ChainPort Gateway — .gitignore
-# ============================================================
+go-wails3/bin
+go-wails3/build
+go-wails3/frontend/node_modules
+go-wails3/.task
 .codex/
 .agent/
 .agents/
 Refer Projects/
+# ============================================================
+# ChainPort Gateway — .gitignore
+# ============================================================
 # ------- proxy core ---------
 c.bat
 singbox_test.json

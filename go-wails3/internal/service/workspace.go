@@ -71,6 +71,8 @@ type CreateNodeInput struct {
 	Password string          `json:"password,omitempty"`
 	UUID     string          `json:"uuid,omitempty"`
 	TLS      bool            `json:"tls"`
+	Insecure bool            `json:"insecure,omitempty"`
+	ALPN     []string        `json:"alpn,omitempty"`
 	SNI      string          `json:"sni,omitempty"`
 	Network  string          `json:"network,omitempty"`
 	Path     string          `json:"path,omitempty"`
@@ -79,18 +81,21 @@ type CreateNodeInput struct {
 }
 
 type UpdateNodeInput struct {
-	ID       string  `json:"id"`
-	Name     string  `json:"name"`
-	Server   string  `json:"server"`
-	Port     uint16  `json:"port"`
-	Network  string  `json:"network"`
-	Path     string  `json:"path,omitempty"`
-	Host     string  `json:"host,omitempty"`
-	TLS      bool    `json:"tls"`
-	SNI      string  `json:"sni,omitempty"`
-	Username *string `json:"username,omitempty"`
-	Password *string `json:"password,omitempty"`
-	GroupID  *string `json:"groupId,omitempty"`
+	ID       string           `json:"id"`
+	Name     string           `json:"name"`
+	Server   string           `json:"server"`
+	Port     uint16           `json:"port"`
+	Network  string           `json:"network"`
+	Path     string           `json:"path,omitempty"`
+	Host     string           `json:"host,omitempty"`
+	TLS      bool             `json:"tls"`
+	SNI      string           `json:"sni,omitempty"`
+	Protocol *domain.Protocol `json:"protocol,omitempty"`
+	Insecure bool             `json:"insecure,omitempty"`
+	ALPN     []string         `json:"alpn,omitempty"`
+	Username *string          `json:"username,omitempty"`
+	Password *string          `json:"password,omitempty"`
+	GroupID  *string          `json:"groupId,omitempty"`
 }
 
 type NodeCredentials struct {
@@ -522,7 +527,7 @@ func (s *WorkspaceService) CreateNode(input CreateNodeInput) (domain.Workspace, 
 		return domain.Workspace{}, errors.New("node name, server and port are required")
 	}
 	if input.Protocol != domain.ProtocolSOCKS5 && input.Protocol != domain.ProtocolHTTP {
-		return domain.Workspace{}, errors.New("manual node creation currently supports SOCKS5 and HTTP")
+		return domain.Workspace{}, errors.New("manual node creation currently supports SOCKS5, HTTP and HTTPS (HTTP with TLS)")
 	}
 	candidate := cloneWorkspace(s.state)
 	nodeID, err := newID()
@@ -572,7 +577,7 @@ func (s *WorkspaceService) CreateNode(input CreateNodeInput) (domain.Workspace, 
 	candidate.Nodes = append(candidate.Nodes, domain.Node{
 		ID: nodeID, Name: input.Name, Protocol: input.Protocol, Server: input.Server, Port: input.Port,
 		Credentials: domain.Credentials{UsernameRef: usernameRef, PasswordRef: passwordRef, UUIDRef: uuidRef},
-		Transport:   domain.Transport{Network: network, Path: input.Path, Host: input.Host}, TLS: domain.TLSOptions{Enabled: input.TLS, SNI: input.SNI},
+		Transport:   domain.Transport{Network: network, Path: input.Path, Host: input.Host}, TLS: domain.TLSOptions{Enabled: input.TLS, Insecure: input.Insecure, SNI: input.SNI, ALPN: append([]string(nil), input.ALPN...)},
 		GroupID: input.GroupID,
 	})
 	result, err := s.commit(candidate)
@@ -634,13 +639,21 @@ func (s *WorkspaceService) UpdateNode(input UpdateNodeInput) (domain.Workspace, 
 		node.Name = strings.TrimSpace(input.Name)
 		node.Server = strings.TrimSpace(input.Server)
 		node.Port = input.Port
+		if input.Protocol != nil {
+			if *input.Protocol != domain.ProtocolSOCKS5 && *input.Protocol != domain.ProtocolHTTP {
+				return domain.Workspace{}, errors.New("manual node editing supports SOCKS5, HTTP and HTTPS (HTTP with TLS)")
+			}
+			node.Protocol = *input.Protocol
+		}
 		if input.Network != "" {
 			node.Transport.Network = input.Network
 		}
 		node.Transport.Path = input.Path
 		node.Transport.Host = input.Host
 		node.TLS.Enabled = input.TLS
+		node.TLS.Insecure = input.Insecure
 		node.TLS.SNI = input.SNI
+		node.TLS.ALPN = append([]string(nil), input.ALPN...)
 		if input.GroupID != nil {
 			node.GroupID = *input.GroupID
 		}
@@ -885,154 +898,5 @@ func (s *WorkspaceService) UpdateChain(input UpdateChainInput) (domain.Workspace
 	if !found {
 		bindingID, err := newID()
 		if err != nil {
-			return domain.Workspace{}, err
-		}
-		candidate.PortBindings = append(candidate.PortBindings, domain.PortBinding{ID: bindingID, ChainID: input.ID, ListenHost: "127.0.0.1", ListenPort: port})
-	}
-	return s.commit(candidate)
-}
 
-func (s *WorkspaceService) DeleteChain(chainID string) (domain.Workspace, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	candidate := cloneWorkspace(s.state)
-	chains := candidate.Chains[:0]
-	for _, chain := range candidate.Chains {
-		if chain.ID != chainID {
-			chains = append(chains, chain)
-		}
-	}
-	if len(chains) == len(candidate.Chains) {
-		return domain.Workspace{}, fmt.Errorf("Chain %q does not exist", chainID)
-	}
-	candidate.Chains = chains
-	bindings := candidate.PortBindings[:0]
-	for _, binding := range candidate.PortBindings {
-		if binding.ChainID != chainID {
-			bindings = append(bindings, binding)
-		}
-	}
-	candidate.PortBindings = bindings
-	if candidate.TUN.Kind == domain.TUNBindingChain && candidate.TUN.TargetID == chainID {
-		candidate.TUN = domain.TUNBinding{Kind: domain.TUNBindingNone}
-	}
-	return s.commit(candidate)
-}
-
-func (s *WorkspaceService) SetActiveBaseNode(nodeID string) (domain.Workspace, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	candidate := cloneWorkspace(s.state)
-	if nodeID != "" && !hasNode(candidate, nodeID) {
-		return domain.Workspace{}, fmt.Errorf("Base Node %q does not exist", nodeID)
-	}
-	candidate.ActiveNodeID = nodeID
-	return s.commit(candidate)
-}
-
-func (s *WorkspaceService) BindTUNToBaseNode(nodeID string) (domain.Workspace, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	candidate := cloneWorkspace(s.state)
-	if !hasNode(candidate, nodeID) {
-		return domain.Workspace{}, fmt.Errorf("Base Node %q does not exist", nodeID)
-	}
-	candidate.TUN = domain.TUNBinding{Kind: domain.TUNBindingNode, TargetID: nodeID}
-	candidate.TUN.Enabled = true
-	return s.commit(candidate)
-}
-
-func (s *WorkspaceService) BindTUNToChain(chainID string) (domain.Workspace, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	candidate := cloneWorkspace(s.state)
-	if !hasChain(candidate, chainID) {
-		return domain.Workspace{}, fmt.Errorf("Chain %q does not exist", chainID)
-	}
-	candidate.TUN = domain.TUNBinding{Kind: domain.TUNBindingChain, TargetID: chainID}
-	candidate.TUN.Enabled = true
-	return s.commit(candidate)
-}
-
-func (s *WorkspaceService) ClearTUNBinding() (domain.Workspace, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	candidate := cloneWorkspace(s.state)
-	candidate.TUN = domain.TUNBinding{Kind: domain.TUNBindingNone}
-	return s.commit(candidate)
-}
-
-func (s *WorkspaceService) SetTUNEnabled(enabled bool) (domain.Workspace, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	candidate := cloneWorkspace(s.state)
-	if enabled && candidate.TUN.Kind == domain.TUNBindingNone {
-		return domain.Workspace{}, errors.New("bind TUN to a Base Node or complete Chain before enabling it")
-	}
-	candidate.TUN.Enabled = enabled
-	return s.commit(candidate)
-}
-
-func (s *WorkspaceService) commit(candidate domain.Workspace) (domain.Workspace, error) {
-	if err := candidate.Validate(); err != nil {
-		return domain.Workspace{}, err
-	}
-	if s.store != nil {
-		if err := s.store.Save(context.Background(), candidate); err != nil {
-			return domain.Workspace{}, err
-		}
-	}
-	s.state = candidate
-	return cloneWorkspace(candidate), nil
-}
-
-func cloneWorkspace(workspace domain.Workspace) domain.Workspace {
-	data, _ := json.Marshal(workspace)
-	var clone domain.Workspace
-	_ = json.Unmarshal(data, &clone)
-	return clone
-}
-
-func hasNode(workspace domain.Workspace, id string) bool {
-	for _, node := range workspace.Nodes {
-		if node.ID == id {
-			return true
-		}
-	}
-	return false
-}
-func hasChain(workspace domain.Workspace, id string) bool {
-	for _, chain := range workspace.Chains {
-		if chain.ID == id {
-			return true
-		}
-	}
-	return false
-}
-
-func nextAvailablePort(workspace domain.Workspace) uint16 {
-	return nextAvailablePortExcluding(workspace, "")
-}
-
-func nextAvailablePortExcluding(workspace domain.Workspace, chainID string) uint16 {
-	used := map[uint16]bool{workspace.Settings.BaseListenPort: true}
-	for _, binding := range workspace.PortBindings {
-		if binding.ChainID != chainID {
-			used[binding.ListenPort] = true
-		}
-	}
-	for port := uint32(20001); port <= 65535; port++ {
-		if !used[uint16(port)] {
-			return uint16(port)
-		}
-	}
-	return 0
-}
-
-func newID() (string, error) {
-	var bytes [16]byte
-	if _, err := rand.Read(bytes[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes[:]), nil
-}
+[152 more lines in file. Use offset=901 to continue.]

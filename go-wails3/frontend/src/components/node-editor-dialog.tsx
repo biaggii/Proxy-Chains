@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, Copy, Eye, EyeOff, Grip, X } from "lucide-react";
+import { Clipboard } from "@wailsio/runtime";
 import type { Node, NodeGroup } from "../../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/domain";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,8 +8,20 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } fr
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export interface NodeEditorInput {
-  id?: string; name: string; protocol: string; server: string; port: number;
-  username: string; password: string; network: string; path: string; host: string; tls: boolean; sni: string;
+  id?: string;
+  name: string;
+  protocol?: string;
+  server: string;
+  port: number;
+  username: string;
+  password: string;
+  network: string;
+  path: string;
+  host: string;
+  tls: boolean;
+  insecure: boolean;
+  sni: string;
+  alpn: string[];
   groupId: string;
 }
 
@@ -17,52 +30,234 @@ interface NodeEditorDialogProps {
   node?: Node;
   groups: NodeGroup[];
   credentials?: { username: string; password: string };
+  initialGroupId?: string;
   onOpenChange: (open: boolean) => void;
   onSave: (input: NodeEditorInput) => Promise<void>;
 }
 
-export function NodeEditorDialog({ open, node, groups, credentials, onOpenChange, onSave }: NodeEditorDialogProps) {
-  const [name,setName]=useState(""); const [protocol,setProtocol]=useState("socks5");
-  const [server,setServer]=useState(""); const [port,setPort]=useState("1080");
-  const [username,setUsername]=useState(""); const [password,setPassword]=useState("");
-  const [network,setNetwork]=useState("tcp"); const [path,setPath]=useState(""); const [host,setHost]=useState("");
-  const [tls,setTLS]=useState(false); const [sni,setSNI]=useState("");
-  const [groupId,setGroupId]=useState("");
-  const [saving,setSaving]=useState(false); const [error,setError]=useState<string|null>(null);
+type DragState = { pointerId: number; startX: number; startY: number; originX: number; originY: number };
 
-  useEffect(()=>{
-    if(!open)return;
-    setName(node?.name??"");setProtocol(node?.protocol??"socks5");setServer(node?.server??"");setPort(String(node?.port??1080));
-    setUsername(credentials?.username??"");setPassword(credentials?.password??"");setGroupId(node?.groupId??"");setNetwork(node?.transport?.network||"tcp");setPath(node?.transport?.path||"");setHost(node?.transport?.host||"");
-    setTLS(node?.tls?.enabled??false);setSNI(node?.tls?.sni||"");setError(null);
-  },[open,node,credentials]);
+export function NodeEditorDialog({ open, node, groups, credentials, initialGroupId, onOpenChange, onSave }: NodeEditorDialogProps) {
+  const [name, setName] = useState("");
+  const [protocol, setProtocol] = useState("socks5");
+  const [server, setServer] = useState("");
+  const [port, setPort] = useState("1080");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [passwordCopied, setPasswordCopied] = useState(false);
+  const [network, setNetwork] = useState("tcp");
+  const [path, setPath] = useState("");
+  const [host, setHost] = useState("");
+  const [tls, setTLS] = useState(false);
+  const [insecure, setInsecure] = useState(false);
+  const [sni, setSNI] = useState("");
+  const [alpn, setALPN] = useState("");
+  const [groupId, setGroupId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<DragState | null>(null);
 
-  const supportsUserPassword = protocol === "socks5" || protocol === "http";
+  const canEditProtocol = !node || node.protocol === "socks5" || node.protocol === "http";
+  const supportsUserPassword = protocol === "socks5" || protocol === "http" || protocol === "https";
 
-  const submit=async(event:React.FormEvent<HTMLFormElement>)=>{
-    event.preventDefault();const parsedPort=Number(port);
-    if(!name.trim()||!server.trim()||!Number.isInteger(parsedPort)||parsedPort<1||parsedPort>65535)return;
-    setSaving(true);
-    try{await onSave({id:node?.id,name:name.trim(),protocol,server:server.trim(),port:parsedPort,username,password,network,path,host,tls,sni,groupId});onOpenChange(false)}
-    catch(cause){setError(cause instanceof Error?cause.message:String(cause))}
-    finally{setSaving(false)}
+  useEffect(() => {
+    if (!open) return;
+    const initialProtocol = node?.protocol === "http" && node.tls?.enabled ? "https" : node?.protocol ?? "socks5";
+    setName(node?.name ?? "");
+    setProtocol(initialProtocol);
+    setServer(node?.server ?? "");
+    setPort(String(node?.port ?? 1080));
+    setUsername(credentials?.username ?? "");
+    setPassword(credentials?.password ?? "");
+    setShowPassword(false);
+    setPasswordCopied(false);
+    setGroupId(node?.groupId ?? initialGroupId ?? "");
+    setNetwork(node?.transport?.network || "tcp");
+    setPath(node?.transport?.path || "");
+    setHost(node?.transport?.host || "");
+    setTLS(node?.tls?.enabled ?? false);
+    setInsecure(node?.tls?.insecure ?? false);
+    setSNI(node?.tls?.sni || "");
+    setALPN((node?.tls?.alpn ?? []).join(", "));
+    setError(null);
+    setPosition({ x: 0, y: 0 });
+    dragRef.current = null;
+  }, [open, node, credentials, initialGroupId]);
+
+  useEffect(() => {
+    if (!open) return;
+    const move = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      const element = dialogRef.current;
+      if (!drag || !element || drag.pointerId !== event.pointerId) return;
+      const width = element.offsetWidth;
+      const height = element.offsetHeight;
+      const baseLeft = (window.innerWidth - width) / 2;
+      const baseTop = (window.innerHeight - height) / 2;
+      const minX = 16 - baseLeft;
+      const maxX = window.innerWidth - width - 16 - baseLeft;
+      const minY = 16 - baseTop;
+      const maxY = window.innerHeight - height - 16 - baseTop;
+      setPosition({
+        x: Math.max(minX, Math.min(maxX, drag.originX + event.clientX - drag.startX)),
+        y: Math.max(minY, Math.min(maxY, drag.originY + event.clientY - drag.startY)),
+      });
+    };
+    const stop = () => { dragRef.current = null; };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+  }, [open]);
+
+  const beginDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("button")) return;
+    event.preventDefault();
+    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: position.x, originY: position.y };
   };
 
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="dialog-content" showCloseButton={false}>
-    <div className="dialog-heading"><div><DialogTitle>{node?"Edit Base Node":"Add Base Node"}</DialogTitle><DialogDescription>{node?"Edit node details. Existing credentials remain protected in the OS credential vault.":"Credentials are stored in the operating system credential vault."}</DialogDescription></div><DialogClose render={<Button variant="ghost" size="icon" aria-label="Close" />}><X size={17}/></DialogClose></div>
-    <form onSubmit={submit}>
-      <label className="form-label">Name<Input value={name} onChange={e=>setName(e.target.value)} placeholder="Node name" autoFocus/></label>
-      <label className="form-label">Protocol<Select value={protocol} onValueChange={v=>setProtocol(String(v))} disabled={!!node}><SelectTrigger className="native-select"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="socks5">SOCKS5</SelectItem><SelectItem value="http">HTTP</SelectItem></SelectContent></Select>{node&&<span className="form-hint">Protocol remains fixed. SOCKS5/HTTP credentials can be updated and stay in the OS credential vault.</span>}</label>
-      <div className="form-grid"><label className="form-label">Server<Input value={server} onChange={e=>setServer(e.target.value)} placeholder="proxy.example.com"/></label><label className="form-label">Port<Input type="number" min={1} max={65535} value={port} onChange={e=>setPort(e.target.value)}/></label></div>
-      {supportsUserPassword&&<><div className="form-grid"><label className="form-label">Username (optional)<Input value={username} onChange={e=>setUsername(e.target.value)} autoComplete="off"/></label><label className="form-label">Password (optional)<Input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="new-password"/></label></div><p className="form-hint">Saved credentials are loaded from the OS credential vault. Leave a field empty to clear that credential.</p></>}
-      {!supportsUserPassword&&node&&<p className="form-hint">Credentials for {protocol} are preserved in the OS credential vault and are not editable in this form.</p>}
-      <label className="form-label">Node group<Select value={groupId||"none"} onValueChange={value=>setGroupId(value==="none"?"":String(value))}><SelectTrigger className="native-select"><SelectValue placeholder="No group"/></SelectTrigger><SelectContent><SelectItem value="none">No group</SelectItem>{groups.map(group=><SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>)}</SelectContent></Select></label>
-      <div className="form-grid"><label className="form-label">Transport<Input value={network} onChange={e=>setNetwork(e.target.value)} placeholder="tcp / ws / grpc"/></label><label className="form-label">TLS SNI<Input value={sni} onChange={e=>setSNI(e.target.value)} placeholder="server name"/></label></div>
-      <label className="setting-toggle"><span>TLS enabled</span><input type="checkbox" checked={tls} onChange={e=>setTLS(e.target.checked)}/></label>
-      <div className="form-grid"><label className="form-label">Transport path<Input value={path} onChange={e=>setPath(e.target.value)} placeholder="/"/></label><label className="form-label">Transport host<Input value={host} onChange={e=>setHost(e.target.value)} placeholder="Host header"/></label></div>
-      {!node&&<p className="form-hint">Manual node creation currently supports SOCKS5 and HTTP. Imported protocol credentials are never exposed in this editor.</p>}
-      {error&&<div className="error-panel dialog-error">{error}</div>}
-      <div className="dialog-actions"><Button type="button" variant="outline" onClick={()=>onOpenChange(false)}>Cancel</Button><Button type="submit" disabled={saving||!name.trim()||!server.trim()}>{saving?"Saving…":node?"Save Changes":"Add Node"}</Button></div>
-    </form>
-  </DialogContent></Dialog>;
+  const changeProtocol = (value: string) => {
+    setProtocol(value);
+    setTLS(value === "https");
+    if (value !== "https") setInsecure(false);
+  };
+
+  const changeTLS = (enabled: boolean) => {
+    setTLS(enabled);
+    if (!enabled) setInsecure(false);
+    if (protocol === "http" || protocol === "https") setProtocol(enabled ? "https" : "http");
+  };
+
+  const copyPassword = async () => {
+    if (!password) return;
+    try {
+      await Clipboard.SetText(password);
+      setPasswordCopied(true);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? `Could not copy password: ${cause.message}` : "Could not copy password to the clipboard.");
+    }
+  };
+
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const parsedPort = Number(port);
+    if (!name.trim() || !server.trim() || !Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) return;
+    setSaving(true);
+    try {
+      await onSave({
+        id: node?.id,
+        name: name.trim(),
+        protocol: canEditProtocol ? (protocol === "socks5" ? "socks5" : "http") : undefined,
+        server: server.trim(),
+        port: parsedPort,
+        username,
+        password,
+        network: network.trim() || "tcp",
+        path,
+        host,
+        tls: protocol === "https" ? true : tls,
+        insecure,
+        sni,
+        alpn: alpn.split(",").map((value) => value.trim()).filter(Boolean),
+        groupId,
+      });
+      onOpenChange(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        ref={dialogRef}
+        className="dialog-content node-editor-dialog"
+        showCloseButton={false}
+        style={{ left: "50%", top: "50%", transform: `translate(calc(-50% + ${position.x}px), calc(-50% + ${position.y}px))` }}
+      >
+        <div className="dialog-heading node-editor-drag-handle" onPointerDown={beginDrag}>
+          <div>
+            <DialogTitle>{node ? "Edit Base Node" : "Add Base Node"}</DialogTitle>
+            <DialogDescription>{node ? "Edit node details. Credentials are stored in the OS credential vault." : "Create a SOCKS5, HTTP or HTTPS proxy node."}</DialogDescription>
+          </div>
+          <div className="node-editor-heading-actions">
+            <Grip size={15} className="node-editor-grip" aria-label="Drag dialog" />
+            <DialogClose render={<Button variant="ghost" size="icon" aria-label="Close" />}><X size={17} /></DialogClose>
+          </div>
+        </div>
+        <form onSubmit={submit}>
+          <label className="form-label">Name<Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Node name" autoFocus /></label>
+          <label className="form-label">Protocol
+            {canEditProtocol ? (
+              <Select value={protocol} onValueChange={(value) => changeProtocol(String(value))}>
+                <SelectTrigger className="native-select"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="socks5">SOCKS5</SelectItem>
+                  <SelectItem value="http">HTTP</SelectItem>
+                  <SelectItem value="https">HTTPS</SelectItem>
+                </SelectContent>
+              </Select>
+            ) : <Input value={node?.protocol.toUpperCase() ?? protocol.toUpperCase()} disabled />}
+            {node && !canEditProtocol && <span className="form-hint">Imported protocol is preserved. Edit its endpoint and metadata without changing its protocol credentials.</span>}
+          </label>
+          <div className="form-grid node-endpoint-grid">
+            <label className="form-label">Server<Input value={server} onChange={(event) => setServer(event.target.value)} placeholder="proxy.example.com" /></label>
+            <label className="form-label">Port<Input type="number" min={1} max={65535} value={port} onChange={(event) => setPort(event.target.value)} /></label>
+          </div>
+          {supportsUserPassword && <>
+            <div className="form-grid node-credentials-grid">
+              <label className="form-label">Username (optional)<Input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" /></label>
+              <label className="form-label">Password (optional)
+                <div className="password-control">
+                  <Input type={showPassword ? "text" : "password"} value={password} onChange={(event) => { setPassword(event.target.value); setPasswordCopied(false); }} autoComplete="new-password" />
+                  <Button type="button" size="icon" variant="outline" disabled={!password} title={showPassword ? "Hide password" : "Show password"} aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeOff size={15} /> : <Eye size={15} />}</Button>
+                  <Button type="button" size="icon" variant="outline" disabled={!password} title="Copy password" aria-label="Copy password" onClick={() => void copyPassword()}>{passwordCopied ? <Check size={15} /> : <Copy size={15} />}</Button>
+                </div>
+              </label>
+            </div>
+            <p className="form-hint">Saved credentials are loaded from the OS credential vault. Leave a field empty to clear that credential.</p>
+          </>}
+          {!supportsUserPassword && node && <p className="form-hint">Credentials for {protocol} remain protected in the OS credential vault and are not exposed in this editor.</p>}
+          <label className="form-label">Node group
+            <Select value={groupId || "none"} onValueChange={(value) => setGroupId(value === "none" ? "" : String(value))}>
+              <SelectTrigger className="native-select"><SelectValue placeholder="No group" /></SelectTrigger>
+              <SelectContent><SelectItem value="none">No group</SelectItem>{groups.map((group) => <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </label>
+
+          <details className="node-advanced-options">
+            <summary>Advanced options</summary>
+            <div className="node-advanced-content">
+              <div className="form-grid">
+                <label className="form-label">Transport<Input value={network} onChange={(event) => setNetwork(event.target.value)} placeholder="tcp / ws / grpc" /></label>
+                <label className="form-label">TLS SNI<Input value={sni} onChange={(event) => setSNI(event.target.value)} placeholder="server name" /></label>
+              </div>
+              {protocol !== "socks5" && <label className="setting-toggle"><span>TLS enabled</span><input type="checkbox" checked={protocol === "https" || tls} onChange={(event) => changeTLS(event.target.checked)} /></label>}
+              <label className="setting-toggle"><span>Allow insecure TLS certificate</span><input type="checkbox" checked={insecure} onChange={(event) => setInsecure(event.target.checked)} /></label>
+              <label className="form-label">ALPN (comma separated)<Input value={alpn} onChange={(event) => setALPN(event.target.value)} placeholder="h2, http/1.1" /></label>
+              <div className="form-grid">
+                <label className="form-label">Transport path<Input value={path} onChange={(event) => setPath(event.target.value)} placeholder="/" /></label>
+                <label className="form-label">Transport host<Input value={host} onChange={(event) => setHost(event.target.value)} placeholder="Host header" /></label>
+              </div>
+            </div>
+          </details>
+          {error && <div className="error-panel dialog-error">{error}</div>}
+          <div className="dialog-actions">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type="submit" disabled={saving || !name.trim() || !server.trim() || !Number.isInteger(Number(port)) || Number(port) < 1 || Number(port) > 65535}>{saving ? "Saving…" : node ? "Save Changes" : "Add Node"}</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
 }

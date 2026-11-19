@@ -178,3 +178,12 @@ Still not certified:
 - `Workspace.Groups` stores user-created `NodeGroup` records in the workspace preferences payload; `Node.GroupID` assigns a node to one custom group. This is additive to `Node.SourceID`: subscription groups remain source-managed. The Base view shows All, ungrouped Customs, custom groups and subscription groups. Groups can be created, renamed and deleted; deleting a custom group clears node assignments but does not delete nodes or subscriptions.
 - Core Engine executable path has a Browse button wired to Wails' native file picker. The selected path is checked for a regular file and, on Unix, executable permission, then placed in the Settings draft. Save Settings persists it; cancelling the picker leaves the draft unchanged.
 - Chain Create/Edit now follows the Python two-column pattern: searchable Available Base Nodes on the left, ordered Chain Hops on the right, Add, Remove, Move Up and Move Down controls, plus name and local listener port fields. Double-clicking an available node also adds it. The right column order is the actual Entry-to-Exit order used by config generation.
+
+
+## 2026-11-19 Node editor and navigation follow-up
+
+- The shared `NodeEditorDialog` is used for both Add and Edit. Manual protocol choices are SOCKS5, HTTP and HTTPS. HTTPS is represented in the domain as `ProtocolHTTP` with `TLS.Enabled=true`, matching the existing parser representation; no separate protocol enum is introduced. Editing an existing SOCKS5/HTTP node can switch among these choices. Imported non-manual protocols remain fixed.
+- Password input has show/hide and native Wails clipboard-copy controls (`@wailsio/runtime` Clipboard). Advanced options are grouped in a collapsible section: transport, SNI, TLS, per-node insecure verification and ALPN, transport path and host. These values are persisted through the existing node TLS/transport fields.
+- The node dialog is viewport-bounded, vertically scrollable, initially centered and draggable by its title bar. Drag offsets are clamped so the dialog remains inside the window.
+- Custom group chips have a right-click menu for Add Node to Group, Rename Group and Delete Group. Node rows expose Edit/Delete actions and retain their right-click menu. The sidebar is a compact icon-only rail with tooltips and accessible labels.
+- HTTPS is configured in sing-box, Xray and Mihomo through the existing HTTP outbound TLS options; regression coverage asserts the generated TLS and SNI fields for all three adapters.

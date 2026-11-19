@@ -182,6 +182,33 @@ func TestAdaptersDoNotEmitNilShadowsocksPluginForOrdinaryNodes(t *testing.T) {
 	}
 }
 
+func TestHTTPSProxyEmitsTLSForAllCoreAdapters(t *testing.T) {
+	node := ResolvedNode{Domain: domain.Node{Protocol: domain.ProtocolHTTP, Name: "HTTPS", Server: "proxy.example", Port: 8443, Transport: domain.Transport{Network: "tcp"}, TLS: domain.TLSOptions{Enabled: true, SNI: "proxy.example", ALPN: []string{"h2"}}}, Username: "user", Password: "password", Extra: map[string]any{}}
+	network := domain.DefaultWorkspace().Settings.Network
+	sing, _, err := singBoxOutbound(node, "https-test", network)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tls, ok := sing["tls"].(map[string]any); !ok || tls["enabled"] != true || tls["server_name"] != "proxy.example" {
+		t.Fatalf("sing-box HTTPS proxy TLS missing: %+v", sing)
+	}
+	xray, err := xrayOutbound(node, "https-test", network)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := xray["streamSettings"].(map[string]any)
+	if stream["security"] != "tls" || stream["tlsSettings"].(map[string]any)["serverName"] != "proxy.example" {
+		t.Fatalf("Xray HTTPS proxy TLS missing: %+v", xray)
+	}
+	mihomo, err := mihomoProxy(node, "https-test", network)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mihomo["tls"] != true || mihomo["servername"] != "proxy.example" {
+		t.Fatalf("Mihomo HTTPS proxy TLS missing: %+v", mihomo)
+	}
+}
+
 func TestSingBoxUsesDefaultDomainResolverForProxyServerHosts(t *testing.T) {
 	w, secrets := adapterWorkspace()
 	generated, err := GenerateConfig(context.Background(), w, "sing-box", secrets)

@@ -1,7 +1,7 @@
 # ChainPort Gateway — Developer Handover
 
 **Updated:** 2026-11-19
-**Active branch:** `rewrite/go-wails3`
+**Active branch:** `main` (integrated from `rewrite/go-wails3`)
 **Active application:** `go-wails3/`
 
 ## Current implementation

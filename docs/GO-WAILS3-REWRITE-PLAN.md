@@ -1,6 +1,6 @@
 # ChainPort Go + Wails v3 Rewrite Plan
 
-**Current status (2026-11-19):** Go/Wails is the active implementation on `rewrite/go-wails3`. The former Python/PySide6 source, tests and dependency manifests have been removed from the active tree. The Go legacy `state.json` importer remains.
+**Current status (2026-11-19):** Go/Wails is the active implementation, integrated into `main` from `rewrite/go-wails3`. The former Python/PySide6 source, tests and dependency manifests have been removed from the active tree. The Go legacy `state.json` importer remains.
 **Historical scope:** The pre-rewrite inventory, Python source paths, line counts and behavior notes below were captured on 2026-11-18. They document the migration rationale, not a current runtime or a requirement to restore Python.
 **Assessment date:** 2026-11-18
 **Active application:** `go-wails3/`

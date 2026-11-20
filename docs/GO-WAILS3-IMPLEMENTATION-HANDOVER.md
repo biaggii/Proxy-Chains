@@ -1,7 +1,7 @@
 # ChainPort Gateway — Go/Wails 3 Implementation Handover
 
 **Last updated:** 2026-11-19
-**Working branch:** `rewrite/go-wails3`
+**Integrated branch:** `main` (fast-forwarded from `rewrite/go-wails3`)
 **Implementation path:** `go-wails3/`
 **Legacy compatibility:** Python/PySide6 source has been removed; full source is preserved on `backup/main-before-go-wails3-20261119`; Go retains the legacy `state.json` importer
 

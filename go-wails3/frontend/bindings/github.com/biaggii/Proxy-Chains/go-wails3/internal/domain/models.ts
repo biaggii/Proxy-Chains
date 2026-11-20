@@ -95,6 +95,7 @@ export enum Protocol {
 };
 
 export interface Settings {
+    "customNodesGroupName"?: string;
     "baseListenHost": string;
     "baseListenPort": number;
     "core": CoreSettings;

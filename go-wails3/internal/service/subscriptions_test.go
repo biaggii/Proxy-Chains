@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -60,6 +62,18 @@ func TestSubscriptionCreateRefreshAndDelete(t *testing.T) {
 	}
 	if len(deleted.Subscriptions) != 0 || len(deleted.Nodes) != 0 {
 		t.Fatal("subscription deletion did not remove its nodes")
+	}
+}
+
+func TestSubscriptionRefreshReconciliationPreservesCustomGroupMove(t *testing.T) {
+	existing := []domain.Node{{ID: "stable-node", Name: "Imported", Protocol: domain.ProtocolSOCKS5, Server: "proxy.example", Port: 1080, SourceID: "feed", GroupID: "custom-group"}}
+	incoming := []domain.Node{{Name: "Imported", Protocol: domain.ProtocolSOCKS5, Server: "proxy.example", Port: 1080, SourceID: "feed"}}
+	updated, _, _, err := reconcileSubscriptionNodes(existing, incoming, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated) != 1 || updated[0].ID != "stable-node" || updated[0].GroupID != "custom-group" {
+		t.Fatalf("subscription refresh lost the user's custom group move: %+v", updated)
 	}
 }
 
@@ -135,8 +149,14 @@ func TestRefreshPreservesChainReferencesAndDetachesNodesOnSubscriptionDelete(t *
 }
 
 func TestDeleteSubscriptionClearsActiveAndDirectTUNNodeReferences(t *testing.T) {
+	endpoint, listenErr := net.Listen("tcp", "127.0.0.1:0")
+	if listenErr != nil {
+		t.Fatal(listenErr)
+	}
+	defer endpoint.Close()
+	port := endpoint.Addr().(*net.TCPAddr).Port
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("socks5://u:p@node.example:1080#Node"))
+		_, _ = w.Write([]byte("socks5://u:p@127.0.0.1:" + fmt.Sprint(port) + "#Node"))
 	}))
 	defer server.Close()
 	secrets := subscriptionSecrets{}
@@ -164,6 +184,27 @@ func TestDeleteSubscriptionClearsActiveAndDirectTUNNodeReferences(t *testing.T) 
 	}
 	if deleted.ActiveNodeID != "" || deleted.TUN.Kind != domain.TUNBindingNone || len(deleted.Nodes) != 0 {
 		t.Fatalf("dangling node references remain after subscription deletion: %+v", deleted)
+	}
+}
+
+func TestRenameSubscriptionAndDeleteClearsManualGroupAssignments(t *testing.T) {
+	w := domain.DefaultWorkspace()
+	w.Subscriptions = []domain.Subscription{{ID: "feed-a", Name: "Old name"}}
+	w.Nodes = []domain.Node{{ID: "manual-node", Name: "Manual", Protocol: domain.ProtocolSOCKS5, Server: "localhost", Port: 1080, GroupID: "feed-a"}}
+	service, err := NewWorkspaceServiceWithStore(context.Background(), &memoryStore{workspace: w})
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed, err := service.RenameSubscription("feed-a", "New name")
+	if err != nil || renamed.Subscriptions[0].Name != "New name" {
+		t.Fatalf("subscription rename failed: %+v %v", renamed, err)
+	}
+	deleted, err := service.DeleteSubscription("feed-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted.Nodes) != 1 || deleted.Nodes[0].GroupID != "" {
+		t.Fatalf("manual node was not retained and ungrouped after subscription deletion: %+v", deleted.Nodes)
 	}
 }
 

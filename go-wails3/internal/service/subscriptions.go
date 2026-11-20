@@ -24,6 +24,23 @@ type CreateSubscriptionInput struct {
 	UpdateMinutes int               `json:"updateMinutes"`
 }
 
+func (s *WorkspaceService) RenameSubscription(id, name string) (domain.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return domain.Workspace{}, errors.New("subscription name is required")
+	}
+	candidate := cloneWorkspace(s.state)
+	for i := range candidate.Subscriptions {
+		if candidate.Subscriptions[i].ID == id {
+			candidate.Subscriptions[i].Name = name
+			return s.commit(candidate)
+		}
+	}
+	return domain.Workspace{}, fmt.Errorf("subscription %q does not exist", id)
+}
+
 func (s *WorkspaceService) SetSubscriptionEnabled(id string, enabled bool) (domain.Workspace, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -124,6 +141,11 @@ func (s *WorkspaceService) DeleteSubscription(id string) (domain.Workspace, erro
 		return domain.Workspace{}, fmt.Errorf("subscription %q does not exist", id)
 	}
 	candidate.Subscriptions = append(candidate.Subscriptions[:index], candidate.Subscriptions[index+1:]...)
+	for i := range candidate.Nodes {
+		if candidate.Nodes[i].GroupID == id {
+			candidate.Nodes[i].GroupID = ""
+		}
+	}
 	usedByChain := map[string]bool{}
 	for _, chain := range candidate.Chains {
 		for _, hop := range chain.HopNodeIDs {
@@ -381,6 +403,9 @@ func reconcileSubscriptionNodes(existing, incoming []domain.Node, chains []domai
 		previous := bucket[0]
 		buckets[key] = bucket[1:]
 		incoming[i].ID = previous.ID
+		// Keep a user's explicit move into a custom group when refreshing the
+		// subscription. Empty or source-owned assignments remain unchanged.
+		incoming[i].GroupID = previous.GroupID
 		for _, tag := range previous.Tags {
 			incoming[i].Tags = appendUnique(incoming[i].Tags, tag)
 		}

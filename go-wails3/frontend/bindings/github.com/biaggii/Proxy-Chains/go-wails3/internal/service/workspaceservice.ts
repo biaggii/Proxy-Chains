@@ -35,6 +35,15 @@ export function ClearTUNBinding(): $CancellablePromise<domain$0.Workspace> {
     return $Call.ByID(3259710506);
 }
 
+/**
+ * CopyNodeToGroup creates an independent, manually managed copy of a node.
+ * Every credential-vault reference is duplicated; the copy is not owned by its
+ * original subscription and will not be replaced on the next subscription refresh.
+ */
+export function CopyNodeToGroup(nodeID: string, groupID: string): $CancellablePromise<domain$0.Workspace> {
+    return $Call.ByID(2578903340, nodeID, groupID);
+}
+
 export function CreateChain(input: $models.CreateChainInput): $CancellablePromise<domain$0.Workspace> {
     return $Call.ByID(1894127386, input);
 }
@@ -92,6 +101,15 @@ export function ImportLegacyStateFile(): $CancellablePromise<migration$0.Migrati
 }
 
 /**
+ * MoveNodeToGroup moves a node out of its previous group. Moving an imported
+ * subscription node detaches it from the feed so refresh/delete operations no
+ * longer overwrite or remove the user's manually moved node.
+ */
+export function MoveNodeToGroup(nodeID: string, groupID: string): $CancellablePromise<domain$0.Workspace> {
+    return $Call.ByID(3868666036, nodeID, groupID);
+}
+
+/**
  * PickCoreExecutable opens the platform file picker and returns a validated path for the Settings draft.
  */
 export function PickCoreExecutable(coreName: string): $CancellablePromise<string> {
@@ -106,8 +124,16 @@ export function RefreshSubscription(id: string): $CancellablePromise<domain$0.Wo
     return $Call.ByID(36393809, id);
 }
 
+export function RenameCustomNodesGroup(name: string): $CancellablePromise<domain$0.Workspace> {
+    return $Call.ByID(635485696, name);
+}
+
 export function RenameNodeGroup(id: string, name: string): $CancellablePromise<domain$0.Workspace> {
     return $Call.ByID(1769570494, id, name);
+}
+
+export function RenameSubscription(id: string, name: string): $CancellablePromise<domain$0.Workspace> {
+    return $Call.ByID(1423482138, id, name);
 }
 
 export function SetActiveBaseNode(nodeID: string): $CancellablePromise<domain$0.Workspace> {

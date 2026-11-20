@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowRight, ArrowUp, Search, X } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, Search } from "lucide-react";
 import type { Chain, Node } from "../../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/domain";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { FloatingDialog } from "@/components/floating-dialog";
 
 interface ChainEditorDialogProps {
   open: boolean;
@@ -85,12 +85,7 @@ export function ChainEditorDialog({ open, nodes, chain, listenPort, onOpenChange
   const nodeSummary = (node: Node) => `${node.protocol} · ${node.server}:${node.port}`;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="dialog-content chain-editor-dialog" showCloseButton={false}>
-        <div className="dialog-heading">
-          <div><DialogTitle>{chain ? "Edit Chain" : "Create Chain"}</DialogTitle><DialogDescription>Build the route from Entry to Exit. Add Base Nodes, then arrange their order.</DialogDescription></div>
-          <DialogClose render={<Button variant="ghost" size="icon" aria-label="Close" />}><X size={17} /></DialogClose>
-        </div>
+    <FloatingDialog open={open} onOpenChange={onOpenChange} title={chain ? "Edit Chain" : "Create Chain"} description="Build the route from Entry to Exit. Add Base Nodes, then arrange their order." className="chain-editor-dialog" initialWidth={1160} minWidth={640} minHeight={520}>
         <form onSubmit={submit}>
           <div className="chain-name-port">
             <label className="form-label chain-name-field">Name<Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Chain name" autoFocus /></label>
@@ -107,7 +102,7 @@ export function ChainEditorDialog({ open, nodes, chain, listenPort, onOpenChange
                 </button>)}
                 {availableNodes.length === 0 && <div className="chain-list-empty">{nodes.length === 0 ? "No Base Nodes available." : search ? "No matching nodes." : "All available nodes are already in this Chain."}</div>}
               </div>
-              <Button type="button" variant="outline" className="chain-add-button" disabled={!availableSelection} onClick={addSelectedNode}>Add selected node <ArrowRight size={15}/></Button>
+              <Button type="button" variant="outline" className="chain-add-button" disabled={!availableSelection} onClick={addSelectedNode}>Add <ArrowRight size={15}/></Button>
             </section>
 
             <section className="chain-builder-column">
@@ -133,7 +128,6 @@ export function ChainEditorDialog({ open, nodes, chain, listenPort, onOpenChange
           {formError && <div className="error-panel dialog-error">{formError}</div>}
           <div className="dialog-actions"><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button type="submit" disabled={saving || !name.trim() || hopNodeIds.length === 0 || !Number.isInteger(Number(port)) || Number(port) < 1 || Number(port) > 65535}>{saving ? "Saving…" : chain ? "Save Changes" : "Create Chain"}</Button></div>
         </form>
-      </DialogContent>
-    </Dialog>
+    </FloatingDialog>
   );
 }

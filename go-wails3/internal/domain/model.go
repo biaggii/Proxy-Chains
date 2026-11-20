@@ -144,15 +144,16 @@ type NetworkSettings struct {
 }
 
 type Settings struct {
-	BaseListenHost  string          `json:"baseListenHost"`
-	BaseListenPort  uint16          `json:"baseListenPort"`
-	Core            CoreSettings    `json:"core"`
-	Network         NetworkSettings `json:"network"`
-	AutoStart       bool            `json:"autoStart"`
-	RunOnStartup    bool            `json:"runOnStartup"`
-	MinimizeOnStart bool            `json:"minimizeOnStart"`
-	CloseToTray     bool            `json:"closeToTray"`
-	ConfigOutputDir string          `json:"configOutputDir,omitempty"`
+	CustomNodesGroupName string          `json:"customNodesGroupName,omitempty"`
+	BaseListenHost       string          `json:"baseListenHost"`
+	BaseListenPort       uint16          `json:"baseListenPort"`
+	Core                 CoreSettings    `json:"core"`
+	Network              NetworkSettings `json:"network"`
+	AutoStart            bool            `json:"autoStart"`
+	RunOnStartup         bool            `json:"runOnStartup"`
+	MinimizeOnStart      bool            `json:"minimizeOnStart"`
+	CloseToTray          bool            `json:"closeToTray"`
+	ConfigOutputDir      string          `json:"configOutputDir,omitempty"`
 }
 
 type Workspace struct {
@@ -173,7 +174,8 @@ func DefaultWorkspace() Workspace {
 		Groups:        []NodeGroup{}, Subscriptions: []Subscription{}, Nodes: []Node{}, Chains: []Chain{}, PortBindings: []PortBinding{},
 		TUN: TUNBinding{Kind: TUNBindingNone},
 		Settings: Settings{
-			BaseListenHost: "127.0.0.1", BaseListenPort: 10808,
+			CustomNodesGroupName: "Customs",
+			BaseListenHost:       "127.0.0.1", BaseListenPort: 10808,
 			Core:        CoreSettings{Type: "sing-box", Executable: map[string]string{}, LogLevel: "warning"},
 			Network:     NetworkSettings{EnableUDP: true, EnableSniffing: true, BlockQUIC: true, SingboxMuxProtocol: "h2mux", RemoteDNSURL: "https://cloudflare-dns.com/dns-query", BootstrapDNS: "119.29.29.29"},
 			CloseToTray: true,
@@ -286,7 +288,7 @@ func (w Workspace) Validate() error {
 		if strings.TrimSpace(node.Server) == "" || node.Port == 0 {
 			return fmt.Errorf("node %q has an invalid endpoint", node.ID)
 		}
-		if node.GroupID != "" && !groupIDs[node.GroupID] {
+		if node.GroupID != "" && !groupIDs[node.GroupID] && !subscriptionIDs[node.GroupID] {
 			return fmt.Errorf("node %q references missing group %q", node.ID, node.GroupID)
 		}
 		nodes[node.ID] = node

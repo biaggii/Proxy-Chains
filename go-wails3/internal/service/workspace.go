@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -737,6 +738,9 @@ func (s *WorkspaceService) CreateNodeGroup(name string) (domain.Workspace, error
 			return domain.Workspace{}, fmt.Errorf("group %q already exists", name)
 		}
 	}
+	if customName := strings.TrimSpace(candidate.Settings.CustomNodesGroupName); customName != "" && strings.EqualFold(customName, name) {
+		return domain.Workspace{}, fmt.Errorf("group %q already exists", name)
+	}
 	id, err := newID()
 	if err != nil {
 		return domain.Workspace{}, err
@@ -757,6 +761,9 @@ func (s *WorkspaceService) RenameNodeGroup(id, name string) (domain.Workspace, e
 		if candidate.Groups[i].ID != id && strings.EqualFold(candidate.Groups[i].Name, name) {
 			return domain.Workspace{}, fmt.Errorf("group %q already exists", name)
 		}
+	}
+	if customName := strings.TrimSpace(candidate.Settings.CustomNodesGroupName); customName != "" && strings.EqualFold(customName, name) {
+		return domain.Workspace{}, fmt.Errorf("group %q already exists", name)
 	}
 	for i := range candidate.Groups {
 		if candidate.Groups[i].ID == id {
@@ -790,6 +797,129 @@ func (s *WorkspaceService) DeleteNodeGroup(id string) (domain.Workspace, error) 
 		}
 	}
 	return s.commit(candidate)
+}
+
+func (s *WorkspaceService) RenameCustomNodesGroup(name string) (domain.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return domain.Workspace{}, errors.New("custom group name is required")
+	}
+	candidate := cloneWorkspace(s.state)
+	for _, group := range candidate.Groups {
+		if strings.EqualFold(group.Name, name) {
+			return domain.Workspace{}, fmt.Errorf("group %q already exists", name)
+		}
+	}
+	for _, subscription := range candidate.Subscriptions {
+		if strings.EqualFold(subscription.Name, name) {
+			return domain.Workspace{}, fmt.Errorf("subscription group %q already exists", name)
+		}
+	}
+	candidate.Settings.CustomNodesGroupName = name
+	return s.commit(candidate)
+}
+
+// MoveNodeToGroup moves a node out of its previous group. Moving an imported
+// subscription node detaches it from the feed so refresh/delete operations no
+// longer overwrite or remove the user's manually moved node.
+func (s *WorkspaceService) MoveNodeToGroup(nodeID, groupID string) (domain.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	candidate := cloneWorkspace(s.state)
+	if groupID != "" && !hasNodeGroup(candidate, groupID) {
+		return domain.Workspace{}, fmt.Errorf("destination group %q does not exist", groupID)
+	}
+	for i := range candidate.Nodes {
+		if candidate.Nodes[i].ID == nodeID {
+			candidate.Nodes[i].GroupID = groupID
+			if candidate.Nodes[i].SourceID != "" {
+				candidate.Nodes[i].SourceID = ""
+				candidate.Nodes[i].Tags = appendUnique(candidate.Nodes[i].Tags, "detached-subscription")
+			}
+			return s.commit(candidate)
+		}
+	}
+	return domain.Workspace{}, fmt.Errorf("Base Node %q does not exist", nodeID)
+}
+
+// CopyNodeToGroup creates an independent, manually managed copy of a node.
+// Every credential-vault reference is duplicated; the copy is not owned by its
+// original subscription and will not be replaced on the next subscription refresh.
+func (s *WorkspaceService) CopyNodeToGroup(nodeID, groupID string) (domain.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	candidate := cloneWorkspace(s.state)
+	if groupID != "" && !hasNodeGroup(candidate, groupID) {
+		return domain.Workspace{}, fmt.Errorf("destination group %q does not exist", groupID)
+	}
+	var source *domain.Node
+	for i := range candidate.Nodes {
+		if candidate.Nodes[i].ID == nodeID {
+			source = &candidate.Nodes[i]
+			break
+		}
+	}
+	if source == nil {
+		return domain.Workspace{}, fmt.Errorf("Base Node %q does not exist", nodeID)
+	}
+	copyNode := *source
+	newNodeID, err := newID()
+	if err != nil {
+		return domain.Workspace{}, err
+	}
+	copyNode.ID = newNodeID
+	copyNode.Name = uniqueCopyName(candidate.Nodes, source.Name)
+	copyNode.SourceID = ""
+	copyNode.GroupID = groupID
+	copyNode.Tags = append([]string(nil), source.Tags...)
+	copyNode.Tags = removeTags(copyNode.Tags, "stale-subscription-node", "detached-subscription")
+	copyNode.ALPN = append([]string(nil), source.ALPN...)
+	copyNode.TLS.ALPN = append([]string(nil), source.TLS.ALPN...)
+	copyNode.Options = cloneStringMap(source.Options)
+	newRefs := []string{}
+	copyRef := func(reference string) (string, error) {
+		if reference == "" {
+			return "", nil
+		}
+		if s.secrets == nil || !s.secrets.Available() {
+			return "", security.ErrUnavailable
+		}
+		value, err := s.secrets.Get(context.Background(), reference)
+		if err != nil {
+			return "", fmt.Errorf("read source node secret: %w", err)
+		}
+		newRef, err := newID()
+		if err != nil {
+			return "", err
+		}
+		if err := s.secrets.Put(context.Background(), newRef, value); err != nil {
+			return "", err
+		}
+		newRefs = append(newRefs, newRef)
+		return newRef, nil
+	}
+	refs := []*string{&copyNode.Credentials.UsernameRef, &copyNode.Credentials.PasswordRef, &copyNode.Credentials.UUIDRef, &copyNode.Credentials.PrivateKeyRef, &copyNode.SourceMetadataRef}
+	originalRefs := []string{source.Credentials.UsernameRef, source.Credentials.PasswordRef, source.Credentials.UUIDRef, source.Credentials.PrivateKeyRef, source.SourceMetadataRef}
+	for i, ref := range originalRefs {
+		clonedRef, err := copyRef(ref)
+		if err != nil {
+			for _, created := range newRefs {
+				_ = s.secrets.Delete(context.Background(), created)
+			}
+			return domain.Workspace{}, err
+		}
+		*refs[i] = clonedRef
+	}
+	candidate.Nodes = append(candidate.Nodes, copyNode)
+	result, err := s.commit(candidate)
+	if err != nil {
+		for _, created := range newRefs {
+			_ = s.secrets.Delete(context.Background(), created)
+		}
+	}
+	return result, err
 }
 
 func (s *WorkspaceService) DeleteNode(nodeID string) (domain.Workspace, error) {
@@ -933,6 +1063,31 @@ func (s *WorkspaceService) DeleteChain(chainID string) (domain.Workspace, error)
 }
 
 func (s *WorkspaceService) SetActiveBaseNode(nodeID string) (domain.Workspace, error) {
+	if nodeID != "" {
+		s.mu.RLock()
+		var selected *domain.Node
+		for i := range s.state.Nodes {
+			if s.state.Nodes[i].ID == nodeID {
+				node := s.state.Nodes[i]
+				selected = &node
+				break
+			}
+		}
+		s.mu.RUnlock()
+		if selected == nil {
+			return domain.Workspace{}, fmt.Errorf("Base Node %q does not exist", nodeID)
+		}
+		if selected.Protocol != domain.ProtocolWireGuard && strings.ToLower(selected.Transport.Network) != "udp" {
+			address := net.JoinHostPort(strings.TrimSpace(selected.Server), fmt.Sprintf("%d", selected.Port))
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			connection, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
+			if err != nil {
+				return domain.Workspace{}, fmt.Errorf("cannot activate %q: proxy endpoint %s is not reachable: %w", selected.Name, address, err)
+			}
+			_ = connection.Close()
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	candidate := cloneWorkspace(s.state)
@@ -941,6 +1096,61 @@ func (s *WorkspaceService) SetActiveBaseNode(nodeID string) (domain.Workspace, e
 	}
 	candidate.ActiveNodeID = nodeID
 	return s.commit(candidate)
+}
+
+func hasNodeGroup(workspace domain.Workspace, id string) bool {
+	for _, group := range workspace.Groups {
+		if group.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueCopyName(nodes []domain.Node, name string) string {
+	base := name + " (copy)"
+	candidate := base
+	for suffix := 2; ; suffix++ {
+		used := false
+		for _, node := range nodes {
+			if strings.EqualFold(node.Name, candidate) {
+				used = true
+				break
+			}
+		}
+		if !used {
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s %d", base, suffix)
+	}
+}
+
+func removeTags(tags []string, remove ...string) []string {
+	filtered := tags[:0]
+	for _, tag := range tags {
+		keep := true
+		for _, item := range remove {
+			if tag == item {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			filtered = append(filtered, tag)
+		}
+	}
+	return filtered
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func (s *WorkspaceService) BindTUNToBaseNode(nodeID string) (domain.Workspace, error) {

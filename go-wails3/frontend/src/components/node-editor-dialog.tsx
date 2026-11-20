@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
-import { Check, Copy, Eye, EyeOff, Grip, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, Copy, Eye, EyeOff } from "lucide-react";
 import { Clipboard } from "@wailsio/runtime";
-import type { Node, NodeGroup } from "../../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/domain";
+import type { Node, NodeGroup, Subscription } from "../../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/domain";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { FloatingDialog } from "@/components/floating-dialog";
 
 export interface NodeEditorInput {
   id?: string;
@@ -29,15 +29,14 @@ interface NodeEditorDialogProps {
   open: boolean;
   node?: Node;
   groups: NodeGroup[];
+  subscriptions: Subscription[];
   credentials?: { username: string; password: string };
   initialGroupId?: string;
   onOpenChange: (open: boolean) => void;
   onSave: (input: NodeEditorInput) => Promise<void>;
 }
 
-type DragState = { pointerId: number; startX: number; startY: number; originX: number; originY: number };
-
-export function NodeEditorDialog({ open, node, groups, credentials, initialGroupId, onOpenChange, onSave }: NodeEditorDialogProps) {
+export function NodeEditorDialog({ open, node, groups, subscriptions, credentials, initialGroupId, onOpenChange, onSave }: NodeEditorDialogProps) {
   const [name, setName] = useState("");
   const [protocol, setProtocol] = useState("socks5");
   const [server, setServer] = useState("");
@@ -56,9 +55,6 @@ export function NodeEditorDialog({ open, node, groups, credentials, initialGroup
   const [groupId, setGroupId] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [position, setPosition] = useState({ x: 0, y: 0 });
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<DragState | null>(null);
 
   const canEditProtocol = !node || node.protocol === "socks5" || node.protocol === "http";
   const supportsUserPassword = protocol === "socks5" || protocol === "http" || protocol === "https";
@@ -83,45 +79,7 @@ export function NodeEditorDialog({ open, node, groups, credentials, initialGroup
     setSNI(node?.tls?.sni || "");
     setALPN((node?.tls?.alpn ?? []).join(", "));
     setError(null);
-    setPosition({ x: 0, y: 0 });
-    dragRef.current = null;
   }, [open, node, credentials, initialGroupId]);
-
-  useEffect(() => {
-    if (!open) return;
-    const move = (event: PointerEvent) => {
-      const drag = dragRef.current;
-      const element = dialogRef.current;
-      if (!drag || !element || drag.pointerId !== event.pointerId) return;
-      const width = element.offsetWidth;
-      const height = element.offsetHeight;
-      const baseLeft = (window.innerWidth - width) / 2;
-      const baseTop = (window.innerHeight - height) / 2;
-      const minX = 16 - baseLeft;
-      const maxX = window.innerWidth - width - 16 - baseLeft;
-      const minY = 16 - baseTop;
-      const maxY = window.innerHeight - height - 16 - baseTop;
-      setPosition({
-        x: Math.max(minX, Math.min(maxX, drag.originX + event.clientX - drag.startX)),
-        y: Math.max(minY, Math.min(maxY, drag.originY + event.clientY - drag.startY)),
-      });
-    };
-    const stop = () => { dragRef.current = null; };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
-    window.addEventListener("pointercancel", stop);
-    return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-      window.removeEventListener("pointercancel", stop);
-    };
-  }, [open]);
-
-  const beginDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if ((event.target as HTMLElement).closest("button")) return;
-    event.preventDefault();
-    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: position.x, originY: position.y };
-  };
 
   const changeProtocol = (value: string) => {
     setProtocol(value);
@@ -178,23 +136,7 @@ export function NodeEditorDialog({ open, node, groups, credentials, initialGroup
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        ref={dialogRef}
-        className="dialog-content node-editor-dialog"
-        showCloseButton={false}
-        style={{ left: "50%", top: "50%", transform: `translate(calc(-50% + ${position.x}px), calc(-50% + ${position.y}px))` }}
-      >
-        <div className="dialog-heading node-editor-drag-handle" onPointerDown={beginDrag}>
-          <div>
-            <DialogTitle>{node ? "Edit Base Node" : "Add Base Node"}</DialogTitle>
-            <DialogDescription>{node ? "Edit node details. Credentials are stored in the OS credential vault." : "Create a SOCKS5, HTTP or HTTPS proxy node."}</DialogDescription>
-          </div>
-          <div className="node-editor-heading-actions">
-            <Grip size={15} className="node-editor-grip" aria-label="Drag dialog" />
-            <DialogClose render={<Button variant="ghost" size="icon" aria-label="Close" />}><X size={17} /></DialogClose>
-          </div>
-        </div>
+    <FloatingDialog open={open} onOpenChange={onOpenChange} title={node ? "Edit Base Node" : "Add Base Node"} description={node ? "Edit node details. Credentials are stored in the OS credential vault." : "Create a SOCKS5, HTTP or HTTPS proxy node."} className="node-editor-dialog" initialWidth={680} minWidth={500} minHeight={420}>
         <form onSubmit={submit}>
           <label className="form-label">Name<Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Node name" autoFocus /></label>
           <label className="form-label">Protocol
@@ -231,7 +173,7 @@ export function NodeEditorDialog({ open, node, groups, credentials, initialGroup
           <label className="form-label">Node group
             <Select value={groupId || "none"} onValueChange={(value) => setGroupId(value === "none" ? "" : String(value))}>
               <SelectTrigger className="native-select"><SelectValue placeholder="No group" /></SelectTrigger>
-              <SelectContent><SelectItem value="none">No group</SelectItem>{groups.map((group) => <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>)}</SelectContent>
+              <SelectContent><SelectItem value="none">No group</SelectItem>{groups.map((group) => <SelectItem key={`custom-${group.id}`} value={group.id}>{group.name} · Custom</SelectItem>)}{subscriptions.map((subscription) => <SelectItem key={`subscription-${subscription.id}`} value={subscription.id}>{subscription.name} · Subscription</SelectItem>)}</SelectContent>
             </Select>
           </label>
 
@@ -257,7 +199,6 @@ export function NodeEditorDialog({ open, node, groups, credentials, initialGroup
             <Button type="submit" disabled={saving || !name.trim() || !server.trim() || !Number.isInteger(Number(port)) || Number(port) < 1 || Number(port) > 65535}>{saving ? "Saving…" : node ? "Save Changes" : "Add Node"}</Button>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+    </FloatingDialog>
   );
 }

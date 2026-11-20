@@ -114,3 +114,11 @@ The latest UI follow-up restores SOCKS5/HTTP username/password editing through o
 ## Go/Wails 3 node editor follow-up — 2026-11-19
 
 The shared Node Add/Edit dialog now supports SOCKS5, HTTP and HTTPS (HTTP + TLS), password show/hide/copy, collapsible advanced transport/TLS options, viewport-clamped centering and drag movement. Custom group chips have right-click Add Node/Rename/Delete actions; node rows expose Edit/Delete and right-click actions. Sidebar navigation is icon-only. See the implementation handover for exact behavior and tests.
+
+## Go/Wails 3 context-menu and dialog regression follow-up — 2026-11-19
+
+The latest uncommitted work replaces the three context-menu states with one discriminated state and a single ref, fixing repeat right-click handling after deletes. It introduces a reusable Base UI Viewport-based floating dialog for Node, Group and Chain editors with viewport-bounded centering, title-bar drag and corner resize. The Chain builder is kept as the Python two-column layout and its lists expand with the resized window. Typecheck, frontend build, Go tests/race/vet and diff checks passed; manual Wails desktop interaction remains to be accepted. See the detailed implementation handover.
+
+## Go/Wails 3 group and activation follow-up — 2026-11-20
+
+The standalone Add Node toolbar button is removed; Add Node is available by right-clicking All/Customs/custom-group tabs. The virtual Customs bucket is renameable and its label persists in workspace settings. Node context menus now support Move to and Copy to custom groups. Move keeps node IDs/Chain references and detaches feed ownership; Copy creates a separately managed node and duplicates credential vault entries. Active-node selection now requires TCP endpoint reachability (3-second timeout) for TCP nodes; UDP/WireGuard are excluded from this TCP probe. This is not an authentication or end-to-end destination test. Regression tests cover these behaviors. Details are in `GO-WAILS3-IMPLEMENTATION-HANDOVER.md`.

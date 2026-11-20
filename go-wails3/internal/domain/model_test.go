@@ -69,3 +69,12 @@ func TestValidateRequiresUniqueNodeGroupsAndValidAssignments(t *testing.T) {
 		t.Fatal("expected dangling node group assignment to fail")
 	}
 }
+
+func TestValidateAllowsNodeAssignmentToSubscriptionGroup(t *testing.T) {
+	w := DefaultWorkspace()
+	w.Subscriptions = []Subscription{{ID: "subscription-a", Name: "Feed A"}}
+	w.Nodes = []Node{{ID: "node-a", Name: "Manual node", Protocol: ProtocolSOCKS5, Server: "localhost", Port: 1080, GroupID: "subscription-a"}}
+	if err := w.Validate(); err != nil {
+		t.Fatalf("manual node should be allowed in a subscription group: %v", err)
+	}
+}

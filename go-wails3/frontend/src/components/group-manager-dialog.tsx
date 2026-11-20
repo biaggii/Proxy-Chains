@@ -3,7 +3,7 @@ import { Plus, Trash2 } from "lucide-react";
 import type { NodeGroup } from "../../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/domain";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { FloatingDialog } from "@/components/floating-dialog";
 
 interface GroupManagerDialogProps {
   open: boolean;
@@ -35,9 +35,7 @@ export function GroupManagerDialog({ open, groups, onOpenChange, onCreate, onRen
     finally { setBusy(false); }
   };
 
-  return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="group-manager-dialog" showCloseButton>
-      <div className="dialog-heading"><div><DialogTitle>Manage Node Groups</DialogTitle><DialogDescription>Create your own groups and assign Base Nodes from the node editor. Subscription source groups remain separate.</DialogDescription></div></div>
+  return <FloatingDialog open={open} onOpenChange={onOpenChange} title="Manage Node Groups" description="Create your own groups and assign Base Nodes from the node editor. Subscription source groups remain separate." className="group-manager-dialog" initialWidth={680} minWidth={480} minHeight={320}>
       <form className="group-create-row" onSubmit={(event) => { event.preventDefault(); const name = newName.trim(); if (!name) return; void run(async () => { await onCreate(name); setNewName(""); }); }}>
         <Input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="New group name" aria-label="New group name" />
         <Button type="submit" disabled={busy || !newName.trim()}><Plus size={14}/> Create Group</Button>
@@ -52,6 +50,5 @@ export function GroupManagerDialog({ open, groups, onOpenChange, onCreate, onRen
       </div>
       {error && <div className="error-panel dialog-error">{error}</div>}
       <div className="dialog-actions"><Button variant="outline" onClick={() => onOpenChange(false)}>Done</Button></div>
-    </DialogContent>
-  </Dialog>;
+  </FloatingDialog>;
 }

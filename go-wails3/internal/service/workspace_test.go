@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -115,6 +116,100 @@ func TestUpdateManualNodeCanSwitchHTTPAndHTTPS(t *testing.T) {
 	}
 	if updated.Nodes[0].Protocol != domain.ProtocolSOCKS5 || updated.Nodes[0].TLS.Enabled {
 		t.Fatalf("node protocol was not switched to SOCKS5: %+v", updated.Nodes[0])
+	}
+}
+
+func TestSetActiveBaseNodeRejectsUnreachableEndpoint(t *testing.T) {
+	w := domain.DefaultWorkspace()
+	w.Nodes = []domain.Node{{ID: "bad", Name: "Bad endpoint", Protocol: domain.ProtocolSOCKS5, Server: "does-not-exist.invalid", Port: 1080}}
+	service, err := NewWorkspaceServiceWithStore(context.Background(), &memoryStore{workspace: w})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SetActiveBaseNode("bad"); err == nil || !strings.Contains(err.Error(), "not reachable") {
+		t.Fatalf("unreachable node should not become active, got error %v", err)
+	}
+	if service.GetWorkspace().ActiveNodeID != "" {
+		t.Fatal("unreachable node was marked active")
+	}
+}
+
+func TestSetActiveBaseNodeAcceptsReachableTCPEndpoint(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+	w := domain.DefaultWorkspace()
+	w.Nodes = []domain.Node{{ID: "good", Name: "Reachable endpoint", Protocol: domain.ProtocolSOCKS5, Server: "127.0.0.1", Port: uint16(port)}}
+	service, err := NewWorkspaceServiceWithStore(context.Background(), &memoryStore{workspace: w})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SetActiveBaseNode("good"); err != nil {
+		t.Fatalf("reachable endpoint should be selectable: %v", err)
+	}
+	if service.GetWorkspace().ActiveNodeID != "good" {
+		t.Fatal("reachable node was not marked active")
+	}
+}
+
+func TestMoveNodeToGroupRetainsSubscriptionOwnership(t *testing.T) {
+	w := domain.DefaultWorkspace()
+	w.Groups = []domain.NodeGroup{{ID: "target", Name: "Target"}}
+	w.Subscriptions = []domain.Subscription{{ID: "feed", Name: "Feed"}}
+	w.Nodes = []domain.Node{{ID: "node", Name: "Imported", Protocol: domain.ProtocolSOCKS5, Server: "127.0.0.1", Port: 1080, SourceID: "feed", GroupID: "feed"}}
+	service, err := NewWorkspaceServiceWithStore(context.Background(), &memoryStore{workspace: w})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved, err := service.MoveNodeToGroup("node", "target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.Nodes[0].GroupID != "target" || moved.Nodes[0].SourceID != "" {
+		t.Fatalf("move should detach from subscription ownership and set target group: %+v", moved.Nodes[0])
+	}
+}
+
+func TestCopyNodeToGroupDuplicatesVaultSecretsAndDetachesSubscription(t *testing.T) {
+	w := domain.DefaultWorkspace()
+	w.Groups = []domain.NodeGroup{{ID: "target", Name: "Target"}}
+	w.Subscriptions = []domain.Subscription{{ID: "feed", Name: "Feed"}}
+	w.Nodes = []domain.Node{{ID: "node", Name: "Imported", Protocol: domain.ProtocolSOCKS5, Server: "127.0.0.1", Port: 1080, SourceID: "feed", GroupID: "feed", Credentials: domain.Credentials{UsernameRef: "user-ref", PasswordRef: "pass-ref"}}}
+	secrets := subscriptionSecrets{"user-ref": "alice", "pass-ref": "secret"}
+	service, err := NewWorkspaceServiceWithDependencies(context.Background(), &memoryStore{workspace: w}, secrets, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied, err := service.CopyNodeToGroup("node", "target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(copied.Nodes) != 2 {
+		t.Fatalf("expected source and copy, got %d nodes", len(copied.Nodes))
+	}
+	copyNode := copied.Nodes[1]
+	if copyNode.ID == "node" || copyNode.SourceID != "" || copyNode.GroupID != "target" || copyNode.Name != "Imported (copy)" {
+		t.Fatalf("copy should be independently managed in destination group: %+v", copyNode)
+	}
+	if copyNode.Credentials.UsernameRef == "user-ref" || copyNode.Credentials.PasswordRef == "pass-ref" || secrets[copyNode.Credentials.UsernameRef] != "alice" || secrets[copyNode.Credentials.PasswordRef] != "secret" {
+		t.Fatalf("copy did not receive independent vault entries: %+v", copyNode.Credentials)
+	}
+}
+
+func TestRenameCustomNodesGroupPersists(t *testing.T) {
+	service, err := NewWorkspaceServiceWithStore(context.Background(), &memoryStore{workspace: domain.DefaultWorkspace()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := service.RenameCustomNodesGroup("Personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Settings.CustomNodesGroupName != "Personal" {
+		t.Fatalf("custom group name not persisted: %+v", updated.Settings)
 	}
 }
 

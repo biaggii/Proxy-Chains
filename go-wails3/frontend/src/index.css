@@ -362,3 +362,141 @@ button, input { font: inherit; }
   .node-credentials-grid { grid-template-columns: 1fr; gap: 0; }
   .node-endpoint-grid { grid-template-columns: minmax(0, 1fr) 112px; }
 }
+
+/* Base UI viewport: keep popups inside the WebView instead of centering a
+   tall grid popup beyond the visual viewport. */
+.dialog-viewport {
+  position: fixed;
+  inset: 0;
+  z-index: 51;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 16px;
+  pointer-events: none;
+}
+.dialog-viewport > [data-slot="dialog-content"] {
+  position: relative;
+  inset: auto;
+  top: auto;
+  left: auto;
+  translate: none;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  pointer-events: auto;
+}
+.dialog-viewport > [data-slot="dialog-content"].floating-dialog {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
+  resize: none;
+}
+.floating-dialog-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 66px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+.floating-dialog-heading { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+.floating-dialog-heading [data-slot="dialog-title"] { color: #26334a; font-size: 17px; font-weight: 700; }
+.floating-dialog-heading [data-slot="dialog-description"] { color: #8390a5; font-size: 11px; line-height: 1.45; }
+.floating-dialog-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+.floating-dialog-drag-icon { color: #9aa5b5; cursor: grab; }
+.floating-dialog-header:active .floating-dialog-drag-icon { cursor: grabbing; }
+.floating-dialog-body { min-height: 0; flex: 1 1 auto; overflow: auto; padding: 18px 20px 22px; overscroll-behavior: contain; }
+.floating-dialog-body > form { min-height: 0; }
+.floating-dialog-resize {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  z-index: 2;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #94a0b2;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.floating-dialog-resize:hover { background: #edf2f8; color: #476da9; }
+.node-editor-dialog { width: 680px; max-width: calc(100vw - 32px); min-height: 0; max-height: calc(100dvh - 32px); }
+.chain-editor-dialog { width: 1160px; max-width: calc(100vw - 32px); min-height: 0; max-height: calc(100dvh - 32px); }
+.chain-editor-dialog .floating-dialog-body { overflow: auto; }
+.chain-editor-dialog .chain-node-list, .chain-editor-dialog .chain-hop-list { height: clamp(220px, 42vh, 420px); }
+.chain-editor-dialog .chain-builder-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.chain-editor-dialog .chain-hop-actions { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 680px) {
+  .chain-editor-dialog .chain-builder-grid { grid-template-columns: minmax(0, 1fr); }
+  .chain-editor-dialog .chain-node-list, .chain-editor-dialog .chain-hop-list { height: 220px; }
+  .floating-dialog-header { padding: 13px 15px; }
+  .floating-dialog-body { padding: 14px 15px 20px; }
+}
+
+/* Floating dialogs: Base UI Viewport is the positioning frame; Popup is a
+   centered, viewport-bounded panel whose own content scrolls independently. */
+.dialog-viewport [data-slot="dialog-content"] {
+  position: relative !important;
+  inset: auto !important;
+  top: auto !important;
+  left: auto !important;
+  translate: none !important;
+  margin: auto !important;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  pointer-events: auto;
+}
+.dialog-viewport [data-slot="dialog-content"].floating-dialog {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid #d9e0ea;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 22px 70px #17203335;
+  will-change: transform;
+}
+.dialog-viewport { align-items: center; justify-content: center; overflow: auto; }
+.floating-dialog-body { display: flex; min-width: 0; min-height: 0; flex: 1 1 auto; flex-direction: column; overflow: auto; }
+.floating-dialog-body > form { display: flex; min-width: 0; min-height: 0; flex: 1 1 auto; flex-direction: column; }
+.floating-dialog-resize { width: 26px; height: 26px; }
+.floating-dialog-resize svg { transform: rotate(-45deg); }
+.chain-editor-dialog .floating-dialog-body { overflow: auto; }
+.chain-editor-dialog .floating-dialog-body > form { min-height: 100%; }
+.chain-editor-dialog .chain-builder-grid { display: grid; min-height: 360px; flex: 1 1 auto; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+.chain-editor-dialog .chain-builder-column { display: flex; min-width: 0; min-height: 0; flex-direction: column; }
+.chain-editor-dialog .chain-node-list,
+.chain-editor-dialog .chain-hop-list { height: auto; min-height: 260px; flex: 1 1 auto; overflow: auto; }
+.chain-editor-dialog .chain-name-port { flex: 0 0 auto; }
+.chain-editor-dialog .chain-hop-actions,
+.chain-editor-dialog .chain-add-button,
+.chain-editor-dialog .dialog-actions { flex: 0 0 auto; }
+.node-editor-dialog .floating-dialog-body { overflow: auto; }
+.node-editor-dialog .floating-dialog-body > form { gap: 12px; }
+.node-editor-dialog .dialog-actions { margin-top: auto; padding-top: 12px; }
+@media (max-width: 760px) {
+  .chain-editor-dialog .chain-builder-grid { grid-template-columns: minmax(0, 1fr); }
+  .chain-editor-dialog .chain-node-list,
+  .chain-editor-dialog .chain-hop-list { min-height: 200px; max-height: 32vh; }
+}

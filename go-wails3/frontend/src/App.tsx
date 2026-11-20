@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Events } from "@wailsio/runtime";
-import { Activity, Check, CircleHelp, FileText, Layers3, Network, Pencil, Search, Settings2, Shield, ShieldCheck, SlidersHorizontal, Waypoints, Rss, Plus, Trash2, Edit3 } from "lucide-react";
+import { Activity, Check, CircleHelp, Copy, FileText, FolderInput, Layers3, Network, Pencil, Search, Settings2, Shield, ShieldCheck, SlidersHorizontal, Waypoints, Rss, Plus, Trash2, Edit3 } from "lucide-react";
 import { WorkspaceService } from "../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/service";
 import { Protocol } from "../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/domain";
-import type { Chain, Node, NodeGroup, Workspace } from "../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/domain";
+import type { Chain, Node, Workspace } from "../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/domain";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ChainEditorDialog } from "@/components/chain-editor-dialog";
 import { NodeEditorDialog, type NodeEditorInput } from "@/components/node-editor-dialog";
 import { GroupManagerDialog } from "@/components/group-manager-dialog";
+import { NodeGroupTransferDialog } from "@/components/node-group-transfer-dialog";
 import { SubscriptionEditorDialog } from "@/components/subscription-editor-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -33,9 +34,14 @@ function App() {
   const [editingNodeCredentials,setEditingNodeCredentials]=useState<{username:string;password:string}>({username:"",password:""});
   const [groupManagerOpen,setGroupManagerOpen]=useState(false);
   const [subscriptionManagerOpen,setSubscriptionManagerOpen]=useState(false);
-  const [nodeContext,setNodeContext]=useState<{node:Node;x:number;y:number}|null>(null);
-  const [groupContext,setGroupContext]=useState<{group:NodeGroup;x:number;y:number}|null>(null);
-  const [chainContext,setChainContext]=useState<{chain:Chain;x:number;y:number}|null>(null);
+  const [contextMenu,setContextMenu]=useState<
+    | {kind:"node";node:Node;x:number;y:number}
+    | {kind:"group";group:{kind:"all"|"custom"|"subscription"|"customs";id:string;name:string};x:number;y:number}
+    | {kind:"chain";chain:Chain;x:number;y:number}
+    | null
+  >(null);
+  const [nodeTransfer,setNodeTransfer]=useState<{node:Node;mode:"move"|"copy"}|null>(null);
+  const contextMenuRef=useRef<HTMLDivElement>(null);
   const [logsOpen, setLogsOpen] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<{ status: string; pid?: number; lastError?: string }>({ status: "stopped" });
   const [runtimeLogs, setRuntimeLogs] = useState<string[]>([]);
@@ -66,20 +72,37 @@ function App() {
   const subscriptions = workspace?.subscriptions ?? [];
   const nodeGroups=useMemo(()=>[
     {id:"all",label:"All",count:nodes.length},
-    ...(nodes.some(node=>!node.sourceId&&!node.groupId)?[{id:"customs",label:"Customs",count:nodes.filter(node=>!node.sourceId&&!node.groupId).length}]:[]),
+    ...(nodes.some(node=>!node.groupId&&(!node.sourceId||!subscriptions.some(sub=>sub.id===node.sourceId)))?[{id:"customs",label:workspace?.settings.customNodesGroupName?.trim()||"Customs",count:nodes.filter(node=>!node.groupId&&(!node.sourceId||!subscriptions.some(sub=>sub.id===node.sourceId))).length}]:[]),
     ...(workspace?.groups??[]).map(group=>({id:group.id,label:group.name,count:nodes.filter(node=>node.groupId===group.id).length})),
-    ...subscriptions.map(subscription=>({id:subscription.id,label:subscription.name,count:nodes.filter(node=>node.sourceId===subscription.id).length})),
+    ...subscriptions.map(subscription=>({id:subscription.id,label:subscription.name,count:nodes.filter(node=>node.groupId===subscription.id||(node.sourceId===subscription.id&&(!node.groupId||node.groupId===subscription.id))).length})),
   ],[nodes,subscriptions,workspace?.groups]);
   const visibleNodes = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase();
     return nodes.filter(node=>{
-      const matchesGroup=selectedGroup==="all"||(selectedGroup==="customs"?!node.sourceId&&!node.groupId:node.groupId===selectedGroup||node.sourceId===selectedGroup);
+      const isSubscriptionGroup=subscriptions.some(subscription=>subscription.id===selectedGroup);
+      const matchesGroup=selectedGroup==="all"||(selectedGroup==="customs"?!node.groupId&&(!node.sourceId||!subscriptions.some(sub=>sub.id===node.sourceId)):node.groupId===selectedGroup||(isSubscriptionGroup&&node.sourceId===selectedGroup&&(!node.groupId||node.groupId===selectedGroup)));
       const matchesQuery=!query||[node.name,node.server,node.protocol].some(value=>value.toLocaleLowerCase().includes(query));
       return matchesGroup&&matchesQuery;
     });
-  }, [filter, nodes, selectedGroup]);
+  }, [filter, nodes, selectedGroup, subscriptions]);
 
   useEffect(()=>{if(!nodeGroups.some(group=>group.id===selectedGroup))setSelectedGroup("all")},[nodeGroups,selectedGroup]);
+
+  useEffect(()=>{
+    if(!contextMenu)return;
+    const outsidePointer=(event:PointerEvent)=>{
+      if(event.button!==0)return;
+      if(event.target instanceof Element&&!contextMenuRef.current?.contains(event.target))setContextMenu(null);
+    };
+    const outsideContext=(event:MouseEvent)=>{
+      if(event.target instanceof Element&&!contextMenuRef.current?.contains(event.target))setContextMenu(null);
+    };
+    const keydown=(event:KeyboardEvent)=>{if(event.key==="Escape")setContextMenu(null)};
+    document.addEventListener("pointerdown",outsidePointer,true);
+    document.addEventListener("contextmenu",outsideContext,true);
+    document.addEventListener("keydown",keydown);
+    return()=>{document.removeEventListener("pointerdown",outsidePointer,true);document.removeEventListener("contextmenu",outsideContext,true);document.removeEventListener("keydown",keydown)};
+  },[contextMenu]);
 
   const tunLabel = useMemo(() => {
     if (!workspace || workspace.tun.kind === "none") return "Not bound";
@@ -160,7 +183,7 @@ function App() {
   };
 
   const openNodeEditor=async(node?:Node, groupId?:string)=>{
-    setNodeContext(null);setGroupContext(null);setEditingNode(node);setNodeEditorInitialGroupId(groupId??"");setEditingNodeCredentials({username:"",password:""});
+    setContextMenu(null);setEditingNode(node);setNodeEditorInitialGroupId(groupId??"");setEditingNodeCredentials({username:"",password:""});
     if(node&&(node.protocol==="socks5"||node.protocol==="http")){
       try{const credentials=await WorkspaceService.GetNodeCredentials(node.id);setEditingNodeCredentials({username:credentials.username??"",password:credentials.password??""})}
       catch(error){setActionError(error instanceof Error?error.message:String(error));return}
@@ -171,18 +194,33 @@ function App() {
   const createNodeGroup=async(name:string)=>{const next=await WorkspaceService.CreateNodeGroup(name);setWorkspace(next);const createdGroup=next.groups?.[next.groups.length-1];setSelectedGroup(createdGroup?.id??"all");setActionError(null)};
   const renameNodeGroup=async(id:string,name:string)=>{setWorkspace(await WorkspaceService.RenameNodeGroup(id,name));setActionError(null)};
   const deleteNodeGroup=async(id:string)=>{setWorkspace(await WorkspaceService.DeleteNodeGroup(id));if(selectedGroup===id)setSelectedGroup("all");setActionError(null)};
+  const renameCustomNodesGroup=async(name:string)=>{setWorkspace(await WorkspaceService.RenameCustomNodesGroup(name));setActionError(null)};
+  const renameSubscription=async(id:string,name:string)=>{setWorkspace(await WorkspaceService.RenameSubscription(id,name));setActionError(null)};
 
-  const renameGroupFromContext=async(group:NodeGroup)=>{
-    setGroupContext(null);
-    const name=window.prompt("Rename node group",group.name);
+  const renameGroupFromContext=async(group:{kind:"all"|"custom"|"subscription"|"customs";id:string;name:string})=>{
+    setContextMenu(null);
+    const name=window.prompt(group.kind==="customs"?"Rename Customs group":group.kind==="custom"?"Rename node group":"Rename subscription group",group.name);
     if(name===null||!name.trim())return;
-    try{await renameNodeGroup(group.id,name.trim())}catch(error){setActionError(error instanceof Error?error.message:String(error))}
+    try{if(group.kind==="customs")await renameCustomNodesGroup(name.trim());else if(group.kind==="custom")await renameNodeGroup(group.id,name.trim());else await renameSubscription(group.id,name.trim())}catch(error){setActionError(error instanceof Error?error.message:String(error))}
   };
 
-  const removeGroupFromContext=async(group:NodeGroup)=>{
-    setGroupContext(null);
-    if(!window.confirm(`Delete group "${group.name}"? Nodes will remain and become ungrouped.`))return;
-    try{await deleteNodeGroup(group.id)}catch(error){setActionError(error instanceof Error?error.message:String(error))}
+  const removeGroupFromContext=async(group:{kind:"all"|"custom"|"subscription"|"customs";id:string;name:string})=>{
+    setContextMenu(null);
+    if(group.kind==="customs"||group.kind==="all")return;
+    const prompt=group.kind==="custom"?`Delete group "${group.name}"? Nodes will remain and become ungrouped.`:`Delete subscription "${group.name}"? Imported nodes not used by a Chain will be removed.`;
+    if(!window.confirm(prompt))return;
+    try{if(group.kind==="custom")await deleteNodeGroup(group.id);else{const next=await WorkspaceService.DeleteSubscription(group.id);setWorkspace(next);if(selectedGroup===group.id)setSelectedGroup("all")}}catch(error){setActionError(error instanceof Error?error.message:String(error))}
+  };
+
+  const confirmNodeTransfer=async(groupID:string)=>{
+    if(!nodeTransfer)return;
+    const destinationID=groupID==="__customs__"?"":groupID;
+    const next=nodeTransfer.mode==="move"
+      ? await WorkspaceService.MoveNodeToGroup(nodeTransfer.node.id,destinationID)
+      : await WorkspaceService.CopyNodeToGroup(nodeTransfer.node.id,destinationID);
+    setWorkspace(next);
+    setActionError(null);
+    setNodeTransfer(null);
   };
 
   const createSubscription=async(input:{name:string;url:string;userAgent:string;headers:Record<string,string>;updateMinutes:number})=>{
@@ -254,13 +292,13 @@ function App() {
               <Tabs value={nodeView} onValueChange={(value) => setNodeView(String(value))} className="node-tabs">
                 <TabsList className="tabs-list"><TabsTrigger value="base" className="tab-trigger"><Network size={15} /> Base</TabsTrigger><TabsTrigger value="chain" className="tab-trigger"><Layers3 size={15} /> Chain</TabsTrigger></TabsList>
                 <TabsContent value="base" className="tab-panel">
-                  <div className="panel-heading"><div><h2>Base Nodes</h2><p>Single-hop endpoints from manual entries and subscription sources.</p></div><div className="panel-tools"><div className="search-wrap"><Search size={15} /><Input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter by name, address or protocol" /></div>{nodes.length===0&&subscriptions.length===0&&<Button variant="outline" onClick={()=>void importLegacyState()}>Import Legacy State</Button>}<Button variant="outline" onClick={()=>setSubscriptionManagerOpen(true)}><Rss size={14}/> Subscriptions…</Button><Button onClick={() => openNodeEditor()}>Add Node</Button></div></div>
-                  <div className="node-group-bar" role="tablist" aria-label="Node groups"><div className="node-group-chips">{nodeGroups.map(group=><button key={group.id} className={`group-chip ${selectedGroup===group.id?"active":""}`} onClick={()=>setSelectedGroup(group.id)} onContextMenu={event=>{const customGroup=(workspace?.groups??[]).find(item=>item.id===group.id);if(!customGroup)return;event.preventDefault();setGroupContext({group:customGroup,x:Math.min(event.clientX,window.innerWidth-220),y:Math.min(event.clientY,window.innerHeight-180)})}} role="tab" aria-selected={selectedGroup===group.id}>{group.label}<span>{group.count}</span></button>)}</div><Button size="sm" variant="outline" onClick={()=>setGroupManagerOpen(true)}><Plus size={14}/> Create Group</Button></div>
-                  {loadError ? <div className="error-panel">Could not load workspace: {loadError}</div> : <Card className="table-card"><CardContent className="table-content"><Table className="data-table"><TableHeader><TableRow><TableHead>TYPE</TableHead><TableHead>REMARKS</TableHead><TableHead>ADDRESS</TableHead><TableHead>PORT</TableHead><TableHead>TRANSPORT</TableHead><TableHead>TLS</TableHead><TableHead>GROUP / SOURCE</TableHead><TableHead>ACTIVE</TableHead><TableHead>ACTIONS</TableHead></TableRow></TableHeader><TableBody>{visibleNodes.map(node=>{const source=subscriptions.find(item=>item.id===node.sourceId);const group=(workspace?.groups??[]).find(item=>item.id===node.groupId);const groupLabel=[group?.name,source?.name??(node.sourceId?"Unknown source":null)].filter(Boolean).join(" · ")||"Custom";return <TableRow key={node.id} data-active={workspace?.activeNodeId===node.id} onClick={()=>void setActiveNode(node.id)} onDoubleClick={()=>void openNodeEditor(node)} onContextMenu={event=>{event.preventDefault();setNodeContext({node,x:Math.min(event.clientX,window.innerWidth-220),y:Math.min(event.clientY,window.innerHeight-230)})}} className="node-data-row"><TableCell><span className="protocol-pill">{node.protocol}</span></TableCell><TableCell className="cell-strong">{node.name}</TableCell><TableCell className="mono">{node.server}</TableCell><TableCell className="mono">{node.port}</TableCell><TableCell>{node.transport?.network||"tcp"}</TableCell><TableCell>{node.tls?.enabled?"TLS":"—"}</TableCell><TableCell>{groupLabel}</TableCell><TableCell>{workspace?.activeNodeId===node.id?<span className="active-node-pill"><Check size={12}/> Active</span>:"—"}</TableCell><TableCell><div className="row-actions"><Button size="icon-sm" variant="ghost" title="Edit node" aria-label={`Edit ${node.name}`} onClick={event=>{event.stopPropagation();void openNodeEditor(node)}}><Pencil size={14}/></Button><Button size="icon-sm" variant="ghost" title="Delete node" aria-label={`Delete ${node.name}`} className="node-delete-action" onClick={event=>{event.stopPropagation();void deleteNode(node.id)}}><Trash2 size={14}/></Button></div></TableCell></TableRow>})}</TableBody></Table>{visibleNodes.length===0&&<div className="empty-state"><div className="empty-icon"><Network size={22}/></div><strong>{filter?"No matching nodes":selectedGroup==="all"?"No Base Nodes yet":"This group has no nodes"}</strong><span>{filter?"Try a different search term.":"Add a node or import a subscription to get started."}</span></div>}</CardContent></Card>}
+                  <div className="panel-heading"><div><h2>Base Nodes</h2><p>Single-hop endpoints from manual entries and subscription sources.</p></div><div className="panel-tools"><div className="search-wrap"><Search size={15} /><Input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter by name, address or protocol" /></div>{nodes.length===0&&subscriptions.length===0&&<Button variant="outline" onClick={()=>void importLegacyState()}>Import Legacy State</Button>}<Button variant="outline" onClick={()=>setSubscriptionManagerOpen(true)}><Rss size={14}/> Subscriptions…</Button></div></div>
+                  <div className="node-group-bar" role="tablist" aria-label="Node groups"><div className="node-group-chips">{nodeGroups.map(group=><button key={group.id} className={`group-chip ${selectedGroup===group.id?"active":""}`} onClick={()=>setSelectedGroup(group.id)} onContextMenu={event=>{const customGroup=(workspace?.groups??[]).find(item=>item.id===group.id);const subscription=(workspace?.subscriptions??[]).find(item=>item.id===group.id);const isCustoms=group.id==="customs";const isAll=group.id==="all";if(!customGroup&&!subscription&&!isCustoms&&!isAll)return;event.preventDefault();event.stopPropagation();setContextMenu({kind:"group",group:{kind:isAll?"all":isCustoms?"customs":customGroup?"custom":"subscription",id:group.id,name:group.label},x:Math.max(8,Math.min(event.clientX,window.innerWidth-230)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-170))})}} role="tab" aria-selected={selectedGroup===group.id}>{group.label}<span>{group.count}</span></button>)}</div><Button size="sm" variant="outline" onClick={()=>setGroupManagerOpen(true)}><Plus size={14}/> Create Group</Button></div>
+                  {loadError ? <div className="error-panel">Could not load workspace: {loadError}</div> : <Card className="table-card"><CardContent className="table-content"><Table className="data-table"><TableHeader><TableRow><TableHead>TYPE</TableHead><TableHead>REMARKS</TableHead><TableHead>ADDRESS</TableHead><TableHead>PORT</TableHead><TableHead>TRANSPORT</TableHead><TableHead>TLS</TableHead><TableHead>GROUP / SOURCE</TableHead><TableHead>ACTIVE</TableHead><TableHead>ACTIONS</TableHead></TableRow></TableHeader><TableBody>{visibleNodes.map(node=>{const source=subscriptions.find(item=>item.id===node.sourceId);const group=(workspace?.groups??[]).find(item=>item.id===node.groupId);const assignedSubscription=subscriptions.find(item=>item.id===node.groupId);const groupLabel=[group?.name,assignedSubscription?.name,source?.name??(node.sourceId?"Unknown source":null)].filter(Boolean).filter((value,index,array)=>array.indexOf(value)===index).join(" · ")||"Custom";return <TableRow key={node.id} data-active={workspace?.activeNodeId===node.id} onClick={()=>void setActiveNode(node.id)} onDoubleClick={()=>void openNodeEditor(node)} onContextMenu={event=>{event.preventDefault();event.stopPropagation();setContextMenu({kind:"node",node,x:Math.max(8,Math.min(event.clientX,window.innerWidth-220)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-230))})}} className="node-data-row"><TableCell><span className="protocol-pill">{node.protocol}</span></TableCell><TableCell className="cell-strong">{node.name}</TableCell><TableCell className="mono">{node.server}</TableCell><TableCell className="mono">{node.port}</TableCell><TableCell>{node.transport?.network||"tcp"}</TableCell><TableCell>{node.tls?.enabled?"TLS":"—"}</TableCell><TableCell>{groupLabel}</TableCell><TableCell>{workspace?.activeNodeId===node.id?<span className="active-node-pill"><Check size={12}/> Active</span>:"—"}</TableCell><TableCell><div className="row-actions"><Button size="icon-sm" variant="ghost" title="Edit node" aria-label={`Edit ${node.name}`} onClick={event=>{event.stopPropagation();void openNodeEditor(node)}}><Pencil size={14}/></Button><Button size="icon-sm" variant="ghost" title="Delete node" aria-label={`Delete ${node.name}`} className="node-delete-action" onClick={event=>{event.stopPropagation();void deleteNode(node.id)}}><Trash2 size={14}/></Button></div></TableCell></TableRow>})}</TableBody></Table>{visibleNodes.length===0&&<div className="empty-state"><div className="empty-icon"><Network size={22}/></div><strong>{filter?"No matching nodes":selectedGroup==="all"?"No Base Nodes yet":"This group has no nodes"}</strong><span>{filter?"Try a different search term.":"Add a node or import a subscription to get started."}</span></div>}</CardContent></Card>}
                 </TabsContent>
                 <TabsContent value="chain" className="tab-panel">
                   <div className="panel-heading"><div><h2>Chain Nodes</h2><p>Compose ordered routes. Each saved Chain owns one local listener.</p></div><Button onClick={() => { setEditingChain(undefined); setEditorOpen(true); }} disabled={nodes.length === 0}>Create Chain</Button></div>
-                  <Card className="table-card"><CardContent className="table-content"><Table className="data-table"><TableHeader><TableRow><TableHead>NAME</TableHead><TableHead>ROUTE · ENTRY → EXIT</TableHead><TableHead>LOCAL PORT</TableHead><TableHead>HOPS</TableHead><TableHead>TUN</TableHead><TableHead>ACTIONS</TableHead></TableRow></TableHeader><TableBody>{chains.map((chain) => { const hopIDs = chain.hopNodeIds ?? []; const port = (workspace?.portBindings ?? []).find((binding) => binding.chainId === chain.id)?.listenPort; return <TableRow key={chain.id} onDoubleClick={()=>editChain(chain)} onContextMenu={event=>{event.preventDefault();setChainContext({chain,x:Math.min(event.clientX,window.innerWidth-220),y:Math.min(event.clientY,window.innerHeight-190)})}} className="node-data-row"><TableCell className="cell-strong">{chain.name}</TableCell><TableCell>{hopIDs.map((id) => nodes.find((node) => node.id === id)?.name ?? "Missing node").join(" → ")}</TableCell><TableCell className="mono">{port ?? "—"}</TableCell><TableCell>{hopIDs.length}</TableCell><TableCell>{workspace?.tun.kind === "chain" && workspace.tun.targetId === chain.id ? <span className="bound-pill">BOUND</span> : "—"}</TableCell><TableCell><div className="row-actions"><Button variant="ghost" size="sm" onClick={() => editChain(chain)} title="Edit Chain"><Pencil size={14} /></Button><Button variant="outline" size="sm" onClick={() => void bindChainTUN(chain.id)} title="Set this complete Chain as the TUN route target"><ShieldCheck size={13} /> Bind TUN</Button><Button variant="ghost" size="sm" onClick={()=>void deleteChain(chain.id)}>Delete</Button></div></TableCell></TableRow>; })}</TableBody></Table>{chains.length === 0 && <div className="empty-state"><div className="empty-icon"><Layers3 size={22} /></div><strong>No Chains created</strong><span>Create a Chain to combine Base Nodes into an ordered route.</span></div>}</CardContent></Card>
+                  <Card className="table-card"><CardContent className="table-content"><Table className="data-table"><TableHeader><TableRow><TableHead>NAME</TableHead><TableHead>ROUTE · ENTRY → EXIT</TableHead><TableHead>LOCAL PORT</TableHead><TableHead>HOPS</TableHead><TableHead>TUN</TableHead><TableHead>ACTIONS</TableHead></TableRow></TableHeader><TableBody>{chains.map((chain) => { const hopIDs = chain.hopNodeIds ?? []; const port = (workspace?.portBindings ?? []).find((binding) => binding.chainId === chain.id)?.listenPort; return <TableRow key={chain.id} onDoubleClick={()=>editChain(chain)} onContextMenu={event=>{event.preventDefault();event.stopPropagation();setContextMenu({kind:"chain",chain,x:Math.max(8,Math.min(event.clientX,window.innerWidth-220)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-190))})}} className="node-data-row"><TableCell className="cell-strong">{chain.name}</TableCell><TableCell>{hopIDs.map((id) => nodes.find((node) => node.id === id)?.name ?? "Missing node").join(" → ")}</TableCell><TableCell className="mono">{port ?? "—"}</TableCell><TableCell>{hopIDs.length}</TableCell><TableCell>{workspace?.tun.kind === "chain" && workspace.tun.targetId === chain.id ? <span className="bound-pill">BOUND</span> : "—"}</TableCell><TableCell><div className="row-actions"><Button variant="ghost" size="sm" onClick={() => editChain(chain)} title="Edit Chain"><Pencil size={14} /></Button><Button variant="outline" size="sm" onClick={() => void bindChainTUN(chain.id)} title="Set this complete Chain as the TUN route target"><ShieldCheck size={13} /> Bind TUN</Button><Button variant="ghost" size="sm" onClick={()=>void deleteChain(chain.id)}>Delete</Button></div></TableCell></TableRow>; })}</TableBody></Table>{chains.length === 0 && <div className="empty-state"><div className="empty-icon"><Layers3 size={22} /></div><strong>No Chains created</strong><span>Create a Chain to combine Base Nodes into an ordered route.</span></div>}</CardContent></Card>
                 </TabsContent>
               </Tabs>
             </>
@@ -301,33 +339,34 @@ function App() {
           <footer className="content-footer"><span>ChainPort Gateway · Rewrite Preview</span><span>Schema v{workspace?.schemaVersion ?? 1}</span></footer>
         </section>
       </div>
-      {nodeContext&&<div className="context-menu-backdrop" onClick={()=>setNodeContext(null)} onContextMenu={event=>{event.preventDefault();setNodeContext(null)}}><div className="node-context-menu" style={{left:nodeContext.x,top:nodeContext.y}} onClick={event=>event.stopPropagation()}>
-        <div className="context-menu-title">{nodeContext.node.name}</div>
-        <button onClick={()=>{void setActiveNode(nodeContext.node.id);setNodeContext(null)}}><Check size={14}/> Use as active node</button>
-        <button onClick={()=>{void bindNodeTUN(nodeContext.node.id);setNodeContext(null)}}><ShieldCheck size={14}/> Bind TUN to this node</button>
+      {contextMenu?.kind==="node"&&<div ref={contextMenuRef} className="node-context-menu" style={{left:contextMenu.x,top:contextMenu.y}} onContextMenu={event=>event.preventDefault()}>
+        <div className="context-menu-title">{contextMenu.node.name}</div>
+        <button onClick={()=>{void setActiveNode(contextMenu.node.id);setContextMenu(null)}}><Check size={14}/> Use as active node</button>
+        <button onClick={()=>{void bindNodeTUN(contextMenu.node.id);setContextMenu(null)}}><ShieldCheck size={14}/> Bind TUN to this node</button>
         <div className="context-menu-separator"/>
-        <button onClick={()=>{void openNodeEditor(nodeContext.node);setNodeContext(null)}}><Edit3 size={14}/> Edit</button>
-        <button className="context-menu-danger" onClick={()=>{const id=nodeContext.node.id;setNodeContext(null);void deleteNode(id)}}><Trash2 size={14}/> Delete</button>
+        <button onClick={()=>{void openNodeEditor(contextMenu.node);setContextMenu(null)}}><Edit3 size={14}/> Edit</button>
+        <button className="context-menu-danger" onClick={()=>{const id=contextMenu.node.id;setContextMenu(null);void deleteNode(id)}}><Trash2 size={14}/> Delete</button>
         <div className="context-menu-separator"/>
-        <button onClick={()=>{setNodeContext(null);openNodeEditor()}}><Plus size={14}/> Create node</button>
-      </div></div>}
-      {groupContext&&<div className="context-menu-backdrop" onClick={()=>setGroupContext(null)} onContextMenu={event=>{event.preventDefault();setGroupContext(null)}}><div className="node-context-menu" style={{left:groupContext.x,top:groupContext.y}} onClick={event=>event.stopPropagation()}>
-        <div className="context-menu-title">{groupContext.group.name}</div>
-        <button onClick={()=>{const group=groupContext.group;setGroupContext(null);void openNodeEditor(undefined,group.id)}}><Plus size={14}/> Add Node to Group</button>
-        <button onClick={()=>void renameGroupFromContext(groupContext.group)}><Edit3 size={14}/> Rename Group</button>
+        <button onClick={()=>{const node=contextMenu.node;setContextMenu(null);setNodeTransfer({node,mode:"move"})}}><FolderInput size={14}/> Move to…</button>
+        <button onClick={()=>{const node=contextMenu.node;setContextMenu(null);setNodeTransfer({node,mode:"copy"})}}><Copy size={14}/> Copy to…</button>
+      </div>}
+      {contextMenu?.kind==="group"&&<div ref={contextMenuRef} className="node-context-menu" style={{left:contextMenu.x,top:contextMenu.y}} onContextMenu={event=>event.preventDefault()}>
+        <div className="context-menu-title">{contextMenu.group.name}</div>
+        {contextMenu.group.kind!=="subscription"&&<button onClick={()=>{const group=contextMenu.group;setContextMenu(null);void openNodeEditor(undefined,group.kind==="customs"||group.kind==="all"?"":group.id)}}><Plus size={14}/> Add Node to Group</button>}
+        {contextMenu.group.kind!=="all"&&<button onClick={()=>void renameGroupFromContext(contextMenu.group)}><Edit3 size={14}/> Rename Group</button>}
+        {contextMenu.group.kind!=="customs"&&contextMenu.group.kind!=="all"&&<><div className="context-menu-separator"/><button className="context-menu-danger" onClick={()=>void removeGroupFromContext(contextMenu.group)}><Trash2 size={14}/> Delete Group</button></>}
+      </div>}
+      {contextMenu?.kind==="chain"&&<div ref={contextMenuRef} className="node-context-menu" style={{left:contextMenu.x,top:contextMenu.y}} onContextMenu={event=>event.preventDefault()}>
+        <div className="context-menu-title">{contextMenu.chain.name}</div>
+        <button onClick={()=>{editChain(contextMenu.chain);setContextMenu(null)}}><Edit3 size={14}/> Edit Chain</button>
+        <button onClick={()=>{void bindChainTUN(contextMenu.chain.id);setContextMenu(null)}}><ShieldCheck size={14}/> Bind TUN to this Chain</button>
         <div className="context-menu-separator"/>
-        <button className="context-menu-danger" onClick={()=>void removeGroupFromContext(groupContext.group)}><Trash2 size={14}/> Delete Group</button>
-      </div></div>}
-      {chainContext&&<div className="context-menu-backdrop" onClick={()=>setChainContext(null)} onContextMenu={event=>{event.preventDefault();setChainContext(null)}}><div className="node-context-menu" style={{left:chainContext.x,top:chainContext.y}} onClick={event=>event.stopPropagation()}>
-        <div className="context-menu-title">{chainContext.chain.name}</div>
-        <button onClick={()=>{editChain(chainContext.chain);setChainContext(null)}}><Edit3 size={14}/> Edit Chain</button>
-        <button onClick={()=>{void bindChainTUN(chainContext.chain.id);setChainContext(null)}}><ShieldCheck size={14}/> Bind TUN to this Chain</button>
-        <div className="context-menu-separator"/>
-        <button className="context-menu-danger" onClick={()=>void deleteChain(chainContext.chain.id).finally(()=>setChainContext(null))}><Trash2 size={14}/> Remove Chain</button>
-        <button onClick={()=>{setEditingChain(undefined);setEditorOpen(true);setChainContext(null)}}><Plus size={14}/> Create Chain</button>
-      </div></div>}
+        <button className="context-menu-danger" onClick={()=>void deleteChain(contextMenu.chain.id).finally(()=>setContextMenu(null))}><Trash2 size={14}/> Remove Chain</button>
+        <button onClick={()=>{setEditingChain(undefined);setEditorOpen(true);setContextMenu(null)}}><Plus size={14}/> Create Chain</button>
+      </div>}
       <ChainEditorDialog open={editorOpen} nodes={nodes} chain={editingChain} listenPort={editingChain ? (workspace?.portBindings ?? []).find((binding) => binding.chainId === editingChain.id)?.listenPort : undefined} onOpenChange={setEditorOpen} onSave={saveChain} />
-      <NodeEditorDialog open={nodeEditorOpen} node={editingNode} groups={workspace?.groups??[]} credentials={editingNodeCredentials} initialGroupId={nodeEditorInitialGroupId} onOpenChange={open=>{setNodeEditorOpen(open);if(!open){setEditingNode(undefined);setNodeEditorInitialGroupId("");setEditingNodeCredentials({username:"",password:""})}}} onSave={saveNode} />
+      <NodeEditorDialog open={nodeEditorOpen} node={editingNode} groups={workspace?.groups??[]} subscriptions={subscriptions} credentials={editingNodeCredentials} initialGroupId={nodeEditorInitialGroupId} onOpenChange={open=>{setNodeEditorOpen(open);if(!open){setEditingNode(undefined);setNodeEditorInitialGroupId("");setEditingNodeCredentials({username:"",password:""})}}} onSave={saveNode} />
+      <NodeGroupTransferDialog open={nodeTransfer!==null} mode={nodeTransfer?.mode??"move"} nodeName={nodeTransfer?.node.name??""} groups={[...(workspace?.groups??[]),{id:"__customs__",name:`${workspace?.settings.customNodesGroupName?.trim()||"Customs"} (ungrouped)`}]} onOpenChange={open=>{if(!open)setNodeTransfer(null)}} onConfirm={confirmNodeTransfer}/>
       <GroupManagerDialog open={groupManagerOpen} groups={workspace?.groups??[]} onOpenChange={setGroupManagerOpen} onCreate={createNodeGroup} onRename={renameNodeGroup} onDelete={deleteNodeGroup}/>
       <SubscriptionEditorDialog open={subscriptionEditorOpen} onOpenChange={open=>{setSubscriptionEditorOpen(open);if(!open)setSubscriptionManagerOpen(true)}} onSave={createSubscription}/>
       <Dialog open={subscriptionManagerOpen} onOpenChange={setSubscriptionManagerOpen}>

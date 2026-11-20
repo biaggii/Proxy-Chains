@@ -1,21 +1,22 @@
 # ChainPort Go + Wails v3 Rewrite Plan
 
-**Status:** Go rewrite is underway on `rewrite/go-wails3`; Python remains the production reference.
+**Current status (2026-11-19):** Go/Wails is the active implementation on `rewrite/go-wails3`. The former Python/PySide6 source, tests and dependency manifests have been removed from the active tree. The Go legacy `state.json` importer remains.
+**Historical scope:** The pre-rewrite inventory, Python source paths, line counts and behavior notes below were captured on 2026-11-18. They document the migration rationale, not a current runtime or a requirement to restore Python.
 **Assessment date:** 2026-11-18
-**Current production branch:** `main` (Python / PySide6)
-**Proposed stack:** Go + Wails v3 + React + TypeScript + Vite + pnpm + shadcn/ui.
+**Active application:** `go-wails3/`
+**Active stack:** Go + Wails v3 + React + TypeScript + Vite + pnpm + shadcn/ui.
 
 ## 1. Executive decision
 
-Rewrite the application shell and application services in Go, but do **not** rewrite the proxy data planes. Keep sing-box and Xray as external child processes, and retain Mihomo as an optional adapter until the product decides whether it is still required. The Go application should own domain state, subscriptions, route composition, configuration generation, validation, process lifecycle, TUN integration, persistence, diagnostics and platform integration. Wails should provide the desktop window/runtime bridge; React/TypeScript should own presentation.
+Decision implemented: the application shell and services are Go/Wails; sing-box, Xray and Mihomo remain external proxy data planes. Go owns domain state, subscriptions, route composition, configuration generation, validation, process lifecycle, TUN integration, persistence, diagnostics and platform integration. Wails provides the desktop runtime bridge; React/TypeScript owns presentation.
 
-The rewrite should be a new implementation alongside the existing Python application. Do not replace the Python entry point or delete its parsers/adapters until the Go implementation passes import, configuration-golden, process-lifecycle, TUN and migration acceptance tests. The existing `state.json` format is the initial import/export compatibility contract.
+The Go rewrite is now the active application. The former Python source has been removed after the rewrite branch was reviewed for integration. The legacy `state.json` format remains an import compatibility contract; do not reintroduce a Python runtime to support it.
 
 Wails v3 is now a stable desktop release line, not the old v3 alpha. The current official status page describes stable desktop support for Windows, macOS and Linux; Wails v3 requires Go 1.26+, and Linux uses GTK4 + WebKitGTK 6.0 by default. Pin an exact stable Wails version rather than tracking nightly builds. The local development environment observed during this assessment is Go 1.27.4, Node 24.22.1 and pnpm 12.15.0.
 
-## 2. Current repository: verified architecture
+## 2. Historical Python repository inventory (2026-11-18)
 
-The current repository is a 7,347-line Python application (counted across `app/`, `core/`, `models/`, `parsers/` and `utils/` on 2026-11-18). The runtime flow is:
+This section records the 7,347-line Python/PySide6 implementation that was audited before the rewrite. Those application files are no longer in the active source tree; the full source remains recoverable from `backup/main-before-go-wails3-20261119`. The Go importer preserves the legacy `state.json` compatibility boundary. The historical runtime flow was:
 
 ```text
 PySide6 UI
@@ -25,7 +26,7 @@ PySide6 UI
   -> ProcessRunner (external core process, stdout/stderr, stop)
 ```
 
-### Active modules
+### Historical modules and their Go destinations
 
 | Area | Current files | Responsibility / rewrite destination |
 |---|---|---|
@@ -50,16 +51,16 @@ PySide6 UI
 - The current core adapters are sing-box, Xray and Mihomo. The core executable performs the actual networking; ChainPort generates config and manages the process.
 - Subscription sources currently support `auto`, v2rayN text/share links and Clash YAML. This is not a direct integration with Clash Verge's local profile database.
 
-## 3. Existing UI requests 1–4: implementation checklist
+## 3. Historical UI requests 1–4: implementation checklist
 
-The current working tree contains these UI changes; they are part of the present handover and must be included in the next verification/commit:
+These were the original Python UI requests. Their Go/Wails equivalents are now in the active implementation:
 
 1. **Chain Create/Edit local port:** `ChainEditorDialog` has a `Local Port` spinbox. Create allocates the next available port; Edit loads the current port and saves a changed port to that Chain's existing `PortMapping`. The shared Base port and other Chain ports are excluded from valid choices. Automated coverage verifies the edited mapping changes without changing another Chain's port.
 2. **Start does not open Logs:** successful manual Start no longer calls the log dialog/tab. Logs remain available only when the user presses the Logs control. Failure details are buffered and the UI tells the user to open Logs; failure must not force the Logs window open either.
 3. **Base heading one row:** `Base Nodes`, active Base Node label and node search are in one horizontal heading row.
 4. **Chain heading one row:** `Chain Nodes`, route summary and Create button are in one horizontal heading row.
 
-The screenshots supplied for these requests show the older running GUI state. Restart the app after rebuilding/running the updated working tree to see the code changes. Do not infer that a currently running process hot-reloaded Python source.
+The screenshots supplied for these requests show an older running GUI state. Restart the Go/Wails application after rebuilding to see code changes.
 
 ## 4. Deprecated, stale and misleading repository material
 
@@ -272,7 +273,7 @@ Requirements:
 
 ## 9. Migration phases and gates
 
-### Phase 0 — Freeze and baseline the Python application
+### Phase 0 — Freeze and baseline the former Python application (completed historical phase)
 
 - Complete the current UI changes 1–4 and verify all tests.
 - Tag/record a known-good Python baseline and export a sanitized sample `state.json` fixture.
@@ -304,7 +305,7 @@ Requirements:
 - Port sing-box and Xray config generation first; Mihomo after parity decision.
 - Validate config with actual pinned binaries in CI where supported.
 - Add child process group management, graceful shutdown, restart, stdout/stderr streaming, crash exit reason and startup timeout.
-- Add route/TUN golden tests and differential tests against the current Python output and v2rayN reference configs.
+- Add route/TUN golden tests against sanitized historical fixtures, pinned core schemas and v2rayN reference configs.
 
 **Exit gate:** Base, each Chain port and full-Chain TUN work in a Linux integration environment; Windows/macOS platform checks are separately tracked.
 
@@ -317,13 +318,13 @@ Requirements:
 
 **Exit gate:** feature parity for everyday workflows; no hidden/duplicate controls; Start never opens Logs automatically.
 
-### Phase 5 — Platform integration and staged rollout
+### Phase 5 — Platform integration and release acceptance
 
 - Linux TUN/permissions, GTK/WebKit packaging, autorun and tray.
 - Windows UAC, WebView2 packaging, startup registration and process cleanup.
 - macOS launch agent, WebKit and TUN privilege strategy.
-- Ship a preview build alongside Python. Keep separate data directories initially; offer explicit import from Python state.
-- Only deprecate Python after a release cycle with migration rollback documented.
+- Keep the legacy `state.json` importer and document recovery/rollback. The former Python source is preserved in the backup branch, not shipped in the active tree.
+- Complete signed packaging and install/upgrade/uninstall validation on supported operating systems.
 
 **Exit gate:** install/upgrade/uninstall, state import, start/stop, crash recovery, TUN and subscription update tests on each supported OS.
 
@@ -373,37 +374,42 @@ Requirements:
 - v2rayN UI and chain ordering documentation: https://github.com/2dust/v2rayN/wiki/Description-of-some-ui
 - v2rayN FAQ and config-generation flow: https://github.com/2dust/v2rayN/wiki/Faq
 
-## 13. Handover commands for the current Python repository
+## 13. Current Go/Wails handover commands
+
+Run from `go-wails3/`:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m pip install -r requirements-dev.txt
-python -m pytest tests/ -q
-python -m compileall -q app core models parsers utils tests
-python main.py
+pnpm --dir frontend install --frozen-lockfile
+wails3 generate bindings -i -ts
+gofmt -w main.go internal
+go test ./...
+go test -race ./...
+go vet ./...
+pnpm --dir frontend run typecheck
+pnpm --dir frontend run build
+wails3 build
+./bin/chainport
 ```
 
 Before editing, read `AGENTS.md`, `README.md`, this plan and the relevant tests. Do not commit `state.json`, subscription URLs/tokens, generated core configs, logs, credentials or private keys. Update `graphify-out` with `graphify update .` after structural code changes if the graph is being maintained.
 
-## 14. Acceptance criteria for starting the rewrite
+## 14. Remaining acceptance criteria for a production release
 
-- [ ] The four UI requests in section 3 are verified in the running application.
-- [ ] Current Python branch is clean and a known-good baseline commit/tag exists.
+- [x] The four UI requests in section 3 were implemented and regression-tested in the Go/Wails application.
+- [x] Go/Wails implementation is maintained on `rewrite/go-wails3`; legacy Python source was removed from the active tree.
 - [ ] Sanitized golden state and core-config fixtures are checked in.
 - [ ] Full-Chain TUN semantics are represented in the domain and all adapters.
 - [ ] Subscription fields with no runtime consumer are either implemented or explicitly removed from the new UI/schema migration plan.
 - [ ] Protocol scope is decided (current set vs Hysteria2/TUIC/AnyTLS additions).
-- [ ] Secret storage and legacy JSON migration are designed.
-- [ ] Wails stable version and Linux packaging baseline are pinned.
-- [ ] Go service API and frontend event contracts are reviewed before implementation.
+- [x] OS credential-vault storage and the Go legacy JSON importer are implemented; additional real-world legacy fixtures remain a release test.
+- [x] Wails stable version and Linux build/package task definitions are pinned.
+- [x] Go service APIs and generated frontend bindings are implemented; keep bindings regenerated after exported API changes.
 
-**Recommended next engineering action:** finish and verify the current Python UI changes, update `AGENTS.md` to match the live architecture, and freeze a clean baseline. Do not start translating every Python file line-by-line; implement the Go domain and acceptance tests first.
+**Recommended next engineering action:** complete core-version golden tests, real traffic tests, privileged TUN lifecycle tests and Windows/macOS release packaging. Keep the legacy `state.json` importer covered by sanitized fixtures.
 
 ## 15. Verification snapshot and handover status (2026-11-18)
 
-The following results were recorded against the current checkout after reviewing the working tree:
+The following results are a historical verification snapshot of the former Python application before its source was removed. The Python test suite passed 108 tests immediately before cleanup; no Python runtime is required by the active application.
 
 | Check | Result | Notes |
 |---|---|---|
@@ -422,11 +428,11 @@ The following results were recorded against the current checkout after reviewing
 
 ## 16. Go rewrite implementation status (branch `rewrite/go-wails3`)
 
-The parallel implementation has started under [`../go-wails3/`](../go-wails3/). The Python application on `main` remains the reference implementation. This is an incremental vertical slice, not feature parity and not a replacement release.
+The active implementation lives under [`../go-wails3/`](../go-wails3/). The former Python application is no longer present in the active source tree. This branch is the Go/Wails product line; remaining release acceptance gaps are listed below.
 
 ### Implemented in the current rewrite branch
 
-- Wails v3.1.0 app shell, React 18 + TypeScript strict mode + Vite 8, pnpm 12.15.0, Tailwind CSS v4, Radix primitives, Lucide and source-owned shadcn-style Button/Card/Input components.
+- Wails v3.1.0 app shell, React 18 + TypeScript strict mode + Vite 8, pnpm 12.15.0, Tailwind CSS v4, shadcn/ui Base UI components (Nova preset) and Lucide.
 - Typed Go domain models for subscriptions, protocol nodes, ordered Chains, local port bindings, TUN target and settings. Credential values are represented as references, not plaintext fields.
 - SQLite schema v1, transactional workspace writes, foreign-key and unique-port constraints, private database file permissions, and workspace read/write tests.
 - OS credential vault integration through `github.com/go-keyring/keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service; unavailable stores fail closed without a plaintext fallback).
@@ -456,24 +462,24 @@ The current verification pass reports `go test ./...`, `go test -race ./...`, `g
 
 ### Not implemented or not yet certified — do not present as working features
 
-- golden config parity against sanitized Python/v2rayN fixtures and validation against pinned live core binaries;
+- golden config parity against sanitized historical/v2rayN fixtures and validation against pinned live core binaries;
 - live traffic tests through Base and each Chain, unexpected process-exit recovery, startup timeout, and core-version/capability detection;
 - actual privileged TUN packet-flow tests and OS-specific interface cleanup (config generation and Linux privilege preflight are not end-to-end TUN support);
 - tray integration and Windows/macOS app builds, signed installers and packaging validation;
 - complete manual editors for VMess/VLESS/Trojan/Shadowsocks/WireGuard (manual creation currently supports SOCKS5 and HTTP; imported feed protocols are parsed);
 - profile export, secret-safe support bundle, full import preview/dry-run and comprehensive error recovery.
 
-The official shadcn initializer's remote preset endpoint timed out during this session. `components.json`, Tailwind v4/Vite integration and locally owned Radix-based source components are present; do not claim the remote CLI initialization completed. Re-run the shadcn CLI when its registry endpoint is reachable, then compare generated config before replacing the source-owned components.
+shadcn/ui is initialized with the Base UI component library and Nova preset. Source components live in `frontend/src/components/ui`; review generated changes before adding or replacing components.
 
 ### Next implementation order
 
-1. Capture sanitized Python/v2rayN config goldens and run generated configs through the exact supported sing-box/Xray/Mihomo binary versions.
+1. Capture sanitized legacy/v2rayN config goldens and run generated configs through the exact supported sing-box/Xray/Mihomo binary versions.
 2. Fix adapter differences exposed by those fixtures; explicitly gate unsupported transport/protocol/core combinations rather than dropping fields.
 3. Exercise real Base/Chain traffic, crash recovery, start timeout, DNS routing and UDP behavior on Linux; then add Windows/macOS CI and desktop smoke coverage.
 4. Complete TUN privilege acquisition, interface lifecycle and packet-flow tests per OS; keep Xray TUN unsupported unless an external bridge is implemented.
 5. Add export/import preview, secret-safe diagnostics, complete protocol editors, tray integration and signed packaging.
 
-Keep this branch separate from `main` until the rewrite's acceptance gates are met. Commit in small vertical slices; do not merge a UI-only preview as a replacement for the Python product.
+The legacy source snapshot is retained on `backup/main-before-go-wails3-20261119`. The active Go/Wails branch can be fast-forwarded to `main` after final checks; do not rewrite the backup branch.
 
 ## 2026-11-19 local destination routing regression
 

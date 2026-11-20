@@ -28,22 +28,12 @@ g.bat
 graphify-out/
 progress.md
 skills-lock.json
-# ---------- Python ----------
-__pycache__/
-*.py[cod]
-*$py.class
-*.pyo
-*.pyd
-.Python
-*.egg-info/
-*.egg
+# ---------- Build output ----------
 dist/
 *.tsbuildinfo
 build/
-*.whl
-*.spec
 
-# ---------- 虛擬環境 ----------
+# ---------- Local environments ----------
 venv/
 .venv/
 env/
@@ -57,13 +47,6 @@ env/
 *~
 .project
 .settings/
-
-# ---------- 測試 / 覆蓋率 ----------
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
 
 # ---------- 基建操作系統 ----------
 Thumbs.db
@@ -86,7 +69,7 @@ sing-box.exe
 xray.exe
 mihomo.exe
 
-# PyInstaller 打包產物
+# Platform packaging artifacts
 *.manifest
 *.exe
 

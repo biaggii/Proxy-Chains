@@ -1,9 +1,11 @@
-# Go / Wails Migration Assessment
+# Go / Wails Architecture Pointer
 
-This file is retained as a compatibility pointer for older links. The current, source-checked assessment and complete implementation plan are maintained in:
+This file is retained for compatibility with older links.
 
-**[Go + Wails v3 Rewrite Plan](GO-WAILS3-REWRITE-PLAN.md)**
+The active implementation and architecture are documented in:
 
-That document supersedes the earlier draft and includes the current Python repository inventory, confirmed stale UI/documentation, fields with no runtime consumer, v2rayN feature comparison, target Go service boundaries, Wails/React/pnpm/shadcn architecture, migration phases, test gates and official references checked on 2026-11-18.
+- [Go/Wails rewrite plan and historical repository assessment](GO-WAILS3-REWRITE-PLAN.md)
+- [Implementation handover](GO-WAILS3-IMPLEMENTATION-HANDOVER.md)
+- [Current developer handover](HANDOVER.md)
 
-No Go rewrite has started. The Python application remains the current implementation until the acceptance criteria in the plan are met.
+The active application lives in `go-wails3/`. The former Python/PySide6 application has been removed. A Go importer remains for legacy `state.json` workspaces.

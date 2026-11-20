@@ -1,93 +1,89 @@
-go-wails3/bin
-go-wails3/build
-go-wails3/frontend/node_modules
-go-wails3/.task
+# Go / Wails build output
+go-wails3/bin/
+go-wails3/build/
+go-wails3/frontend/node_modules/
+go-wails3/frontend/dist/
+go-wails3/.task/
+*.tsbuildinfo
+
+# Local tooling and editor state
 .codex/
 .agent/
 .agents/
-Refer Projects/
-# ============================================================
-# ChainPort Gateway — .gitignore
-# ============================================================
-# ------- proxy core ---------
-c.bat
-singbox_test.json
-bin/
-.agents/
 .claude/
 .clinerules/
-.codex/
 .cursor/
-.github/
 .rtk/
-CLAUDE.md
-RTK.md
-chainport_profile.json
-findings.md
-g.bat
-graphify-out/
-progress.md
-skills-lock.json
-# ---------- Python ----------
-__pycache__/
-*.py[cod]
-*$py.class
-*.pyo
-*.pyd
-.Python
-*.egg-info/
-*.egg
-dist/
-build/
-*.whl
-*.spec
-
-# ---------- 虛擬環境 ----------
-venv/
-.venv/
-env/
-.env/
-
-# ---------- IDE ----------
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.project
-.settings/
 
-# ---------- 測試 / 覆蓋率 ----------
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
-
-# ---------- 基建操作系統 ----------
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-.DS_Store
-*.lnk
-
-# ---------- 本專案特有 ----------
-# 運行時自動產生的狀態檔
+# Local environments and secrets
+.env
+.env.*
+!.env.example
 state.json
+*.db
+*.db-shm
+*.db-wal
 
-# 核心引擎產生的配置檔（由程式自動生成，不需版控）
+# Generated proxy-core configuration and logs
 singbox_config.json
 xray_config.json
 mihomo_config.yaml
-
-# 核心執行檔（不該放進 repo）
+*.log
+sing-box
+xray
+mihomo
 sing-box.exe
 xray.exe
 mihomo.exe
 
-# PyInstaller 打包產物
-*.manifest
+# Platform / package artifacts
+.DS_Store
+Thumbs.db
+Desktop.ini
 *.exe
+*.manifest
+dist/
 
-# ---------- Log ----------
-*.log
+# Local user data and developer-only artifacts retained outside Git
+bin/
+logs/
+chainport_profile.json
+g.bat
+findings.md
+progress.md
+task_plan.md
+skills-lock.json
+graphify-out/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+CLAUDE.md
+RTK.md
+
+# Local-only files retained from the previous development environment
+CLAUDE.md
+RTK.md
+findings.md
+progress.md
+skills-lock.json
+chainport_profile.json
+g.bat
+c.bat
+singbox_test.json
+graphify-out/
+Refer Projects/
+bin/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.github/
+.project
+.settings/
+ehthumbs.db
+*.lnk

@@ -1,169 +1,97 @@
 # ChainPort Gateway
 
-ChainPort Gateway is a cross-platform desktop manager for importing proxy nodes, composing reusable multi-hop chains, and exposing each route through a local proxy port. It generates configuration for sing-box, Xray, or Mihomo; those external core binaries handle the network data plane.
+ChainPort Gateway is a cross-platform desktop control plane for importing proxy nodes, composing ordered multi-hop Chains, exposing local proxy listeners, and configuring one TUN route. The active implementation is **Go + Wails v3 + React + TypeScript + Vite + pnpm**.
+
+The external sing-box, Xray or Mihomo process provides the proxy data plane.
 
 ## Product model
 
 ```text
-v2rayN / Clash-compatible subscription / share URI
-                    |
-                    v
-                Base Nodes
-                    |
-          Create Chain / reorder hops
-                    |
-                    v
-              Chain Node
-          (one saved route)
-                    |
-                    v
-           Local port binding
-                    |
-                    v
-        sing-box / Xray / Mihomo
+Subscription / share URI / Clash YAML
+                 |
+                 v
+             Base Nodes
+                 |
+          Create ordered Chain
+                 |
+                 v
+          Local port binding
+                 |
+                 v
+       sing-box / Xray / Mihomo
 ```
 
-- **Base nodes** are individual VLESS, VMess, Trojan, Shadowsocks, SOCKS5, HTTP, or WireGuard profiles.
-- **Chain nodes** are the saved routes themselves: one ordered list of base nodes, with an automatically allocated local proxy port. There is no second wrapper object for the same route.
-- **Subscriptions** are managed in a v2rayN-style Subscription Group Manager. Each group stores its URL, source format, update policy, User-Agent, HTTP headers, remarks filter, sorting, and conversion-related settings. v2rayN share-link feeds and Clash YAML feeds are supported; this is not a direct Clash Verge profile-database integration.
-- **Port bindings** expose a route on a local mixed (HTTP and SOCKS) proxy listener.
+- Base Nodes represent individual proxy endpoints.
+- A Chain is an ordered list of Base Node IDs, from entry to exit.
+- Each Chain has one local mixed proxy listener; the selected Base Node has a separate shared listener.
+- TUN is a separate route to one Base Node or one complete Chain.
 
-## Interface
+## Technology
 
-The main window has exactly two top-level tabs:
+- Go and Wails v3
+- React, TypeScript strict mode, Vite and pnpm
+- Tailwind CSS v4 and source-owned shadcn/ui Base UI components
+- SQLite persistence and OS credential vault integration
+- External sing-box, Xray and Mihomo binaries
 
-1. **Node Groups** — two subtabs: **Base** and **Chain**. Base is a v2rayN-style individual-node list with subscription groups; Chain is the multi-hop route list.
-2. **Settings** — core selection, executable paths, DNS, TLS fragmentation, QUIC, and startup preferences.
+## Linux prerequisites
 
-The top-right global toolbar is shared by Node Groups and Settings: Logs, runtime/readiness status, the bound TUN node, the TUN switch, editable Shared Port, and one large Run button that changes between Start and Stop. Start generates and validates the selected core configuration before launching it; there is no separate Apply step. Runtime logs open in a separate window.
+Install Go, Node.js 24, pnpm 12, Wails v3 tooling, GTK4 and WebKitGTK 6.0 development/runtime packages for your distribution. See the [Wails Linux build guide](https://v3.wails.io/guides/build/linux/).
 
-### Base Nodes
+## Build from source
 
-- All individual nodes imported from any subscription or added manually appear in one v2rayN-style table, grouped by their subscription source.
-- Base subscription groups are shown as subtabs: `ALL`, `Customs`, and one tab per subscription using its name directly (without a `sub-` prefix).
-- **Subscriptions…** opens the v2rayN-style group manager with Add, Delete, Edit, Share, Update, Update All, and Close. Right-click an individual subscription tab to Edit or Remove that group; those group actions are not duplicated as buttons beside the tabs.
-- **Edit** and **Remove** are available from the Base node table's right-click menu; there are no duplicate buttons below the table. Manual node creation and URI paste are also available from that menu.
-- Add/Edit subscription supports optional URL, Auto/v2rayN/Clash format, Enable update, automatic interval in minutes, remarks regular-expression filter, convert target type, User-Agent, JSON HTTP headers, sort, previous/next proxy remarks with profile selection, custom core, custom SOCKS port, and remarks memo.
-- Updates run in the background. Manual Update and Update All are available in the manager; automatic updates run when enabled and the interval is greater than zero. A successful refresh preserves node IDs for matching profiles and retains removed profiles as stale while a Chain, Active Base selection, or TUN binding still references them.
-- The selected Base Node is exposed through one shared local proxy endpoint, shown and editable in the global toolbar. The default is `127.0.0.1:10808`.
-- Changing the selected Base Node changes the outbound behind that same port. If the core is running, ChainPort regenerates, validates, and restarts it automatically.
-- One shared TUN switch sits in the global toolbar. Right-click a Base Node and choose **Bind TUN to this node**, or right-click a Chain and choose **Bind TUN to this entire chain**. Exactly one TUN target is active: either one Base Node or one complete Chain. Binding a Chain preserves every hop in its original order; it never extracts one hop or rewrites the saved Chain. The toolbar shows the bound node/chain name and the Chain table marks the whole bound Chain. TUN creates no extra local proxy port.
-
-### Chain Nodes
-
-1. Choose **Node Groups → Base → Subscriptions… → Add** to create a subscription group and enter its settings. Choose **Update** to refresh one group or **Update All** to refresh every configured URL.
-2. Alternatively, right-click the Base node table to paste a share URI or create a single node manually.
-3. Choose **Node Groups → Chain**. **Create** is aligned at the right end of the chain summary row. Name the route and select its Base Node hops in entry-to-exit order. Right-click an existing chain to **Edit** or **Remove** it; no duplicate buttons sit below the table.
-4. Save the chain. ChainPort automatically allocates one local proxy port for each chain, starting at `127.0.0.1:20001`.
-5. Choose **Start**. ChainPort generates and validates the configuration, then starts the selected core.
-
-With one active Base Node and N saved Chains, the local proxy port count is N + 1: one shared Base port plus one port per Chain. TUN is a separate virtual interface and does not add a local proxy port.
-
-Existing profiles created by earlier versions are migrated from the old duplicate Chain Node wrapper into the single canonical Chain model. Legacy TUN chain selections are preserved as complete Chains, not collapsed to their final hop. Missing node references invalidate a route rather than silently changing its path.
-
-## Requirements
-
-- Python 3.11 or newer (Python 3.12 is recommended).
-- PySide6, Requests, and PyYAML from `requirements.txt`.
-- One supported core executable: sing-box, Xray, or Mihomo.
-- Linux TUN mode requires root privileges and the platform's TUN support. Windows TUN mode requires administrator privileges.
-
-`ctypes`, `os`, `sys`, `json`, `subprocess`, `uuid`, and other Python standard-library modules are not installed with pip.
-
-## Install
-
-Create an isolated environment:
+Run from the repository root:
 
 ```bash
-python -m venv .venv
+cd go-wails3
+pnpm --dir frontend install --frozen-lockfile
+wails3 generate bindings -i -ts
+gofmt -w main.go internal
+go test ./...
+go test -race ./...
+go vet ./...
+pnpm --dir frontend run typecheck
+pnpm --dir frontend run build
+wails3 build
 ```
 
-Activate it on Linux/macOS:
+The Linux executable is generated at:
+
+```text
+go-wails3/bin/chainport
+```
+
+Run it with:
 
 ```bash
-source .venv/bin/activate
+./go-wails3/bin/chainport
 ```
 
-Activate it on Windows PowerShell:
-
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-Install runtime dependencies:
+Linux packaging tasks are defined in `go-wails3/build/linux/Taskfile.yml`. For example:
 
 ```bash
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+wails3 task linux:create:appimage
+wails3 task linux:create:deb
+wails3 task linux:create:rpm
 ```
 
-Install development/test dependencies when contributing:
+## Data and migration
 
-```bash
-python -m pip install -r requirements-dev.txt
-```
+The application stores its current workspace in SQLite under the user's OS configuration directory. Credentials are stored in the OS credential vault; SQLite stores opaque secret references.
 
-## Core executable paths
+The Go application retains a one-way importer for legacy `state.json` workspaces. The former Python/PySide6 source, dependencies and test suite have been removed from the active repository. No Python runtime is required to build or run ChainPort.
 
-The application detects the platform-specific binaries in these locations when present:
+Do not commit state databases, legacy state files, subscription URLs, authorization headers, proxy credentials, private keys, generated core configurations or runtime logs.
 
-| Core | Linux | Windows |
-|---|---|---|
-| sing-box | `bin/sing_box/sing-box` | `bin/sing_box/sing-box.exe` |
-| Xray | `bin/xray/xray` | `bin/xray/xray.exe` |
-| Mihomo | `bin/mihomo/mihomo` | `bin/mihomo/mihomo.exe` |
+## Current release boundary
 
-Core binaries are not distributed in this repository. Download the correct release for the operating system and architecture, place it in the matching directory, and select it in **Settings** if automatic detection does not find it. On Linux, ensure the binary is executable (`chmod +x path/to/core`). Paths saved by another operating system are discarded and re-detected on load.
+Go unit/race tests, vet, frontend production build and Linux Wails build are part of the verification workflow. These checks do not certify live external-site connectivity or privileged TUN packet flow. Xray native TUN is rejected explicitly; sing-box and Mihomo generate native TUN configurations. Windows/macOS packaging/signing and some platform-specific lifecycle behavior still require release acceptance testing.
 
-## Run
+## Developer documentation
 
-```bash
-python main.py
-```
+- [Current handover](docs/HANDOVER.md)
+- [Detailed Go/Wails implementation handover](docs/GO-WAILS3-IMPLEMENTATION-HANDOVER.md)
+- [Rewrite architecture and historical assessment](docs/GO-WAILS3-REWRITE-PLAN.md)
+- [Go application README](go-wails3/README.md)
 
-Recommended first run:
-
-1. Open **Subscriptions… → Add** to configure a subscription, or right-click the Base table to paste a share URI.
-2. Choose **Chain → Create** and arrange the base-node hops.
-3. Confirm the core executable in Settings.
-4. Choose **Start**. A local proxy port is allocated automatically for every chain.
-
-Use the HTTP CONNECT endpoint for browser/system proxy settings when you want the hostname to reach ChainPort for proxy-side DNS resolution. SOCKS clients should use remote DNS (often called `socks5h`) rather than resolving target hostnames locally.
-
-## Platform behaviour
-
-- **Windows:** Run as Admin uses UAC. Login startup uses the current-user Run registry key.
-- **Linux:** UAC controls are hidden. Login startup uses `~/.config/autostart/chainport-gateway.desktop` (or `$XDG_CONFIG_HOME/autostart`). Run `sudo python main.py` only when TUN mode requires root; ordinary local proxy mode should run as the desktop user.
-- **macOS:** Core management is supported by the Python/Qt application where the selected core is available. Login startup integration is not implemented yet.
-
-## Configuration and data
-
-- `state.json` is created locally and is intentionally excluded from Git. It stores subscriptions, nodes, chains, port bindings, and application settings.
-- Generated core configurations and runtime logs are written to the configured output directory (default: `logs/`).
-- Do not commit subscription URLs, access tokens, private keys, passwords, or personal proxy profiles.
-
-## Development
-
-Run tests:
-
-```bash
-python -m pytest tests/ -q
-```
-
-Compile-check Python modules:
-
-```bash
-python -m compileall -q app core models parsers utils tests
-```
-
-Run the GUI headlessly for a smoke test:
-
-```bash
-QT_QPA_PLATFORM=offscreen python -c "from PySide6.QtWidgets import QApplication; from models.app_state import AppState; from app.ui_main_window import MainWindow; app = QApplication([]); window = MainWindow(AppState('/tmp/chainport-smoke-state.json')); print([window.tabs.tabText(i) for i in range(window.tabs.count())])"
-```
-
-See [the developer handover](docs/HANDOVER.md) for the current entry point and [the Go + Wails v3 rewrite plan](docs/GO-WAILS3-REWRITE-PLAN.md) for the repository audit, v2rayN comparison, architecture, migration phases and acceptance gates. `docs/architecture-rust-go.md` is retained as a redirect for older links.
-
-## License
-
-MIT
+MIT License.

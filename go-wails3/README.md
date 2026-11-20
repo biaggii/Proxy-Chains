@@ -1,6 +1,6 @@
-# ChainPort Gateway — Go Rewrite
+# ChainPort Gateway
 
-This directory contains the parallel Go implementation. The Python/PySide6 application at the repository root remains the current reference implementation until migration and parity gates are met.
+The active desktop application is implemented with Go, Wails v3, React and TypeScript. The former Python/PySide6 implementation has been removed from the active source tree. The Go application retains an importer for legacy `state.json` workspaces.
 
 ## Stack
 
@@ -12,15 +12,16 @@ This directory contains the parallel Go implementation. The Python/PySide6 appli
 
 ## Development
 
+Run these commands from this directory:
+
 ```bash
-cd go-wails3
 go test ./...
 go vet ./...
-cd frontend
-pnpm install --frozen-lockfile
-pnpm run typecheck
-pnpm run build
-cd ..
+pnpm --dir frontend install --frozen-lockfile
+wails3 generate bindings -i -ts
+gofmt -w main.go internal
+pnpm --dir frontend run typecheck
+pnpm --dir frontend run build
 wails3 dev
 ```
 
@@ -45,7 +46,7 @@ Never edit generated bindings manually.
 - `internal/autostart` and `internal/tun`: per-OS startup registration and TUN privilege preflight.
 - `frontend/src`: Base / Chain / custom node groups / subscriptions / Settings / runtime controls and log view.
 
-This is still a preview implementation, not a replacement for the Python app. In the current Linux development environment, generated configs passed the installed sing-box, Xray and Mihomo validators, and local loopback HTTP traffic was verified through each core's local proxy listener. External ISP-filtered site access and privileged TUN packet flow/teardown have not been certified. Xray native TUN is explicitly rejected; sing-box and Mihomo emit native TUN configurations. Windows and macOS app packaging/signing, tray integration, privileged TUN lifecycle, core-version capability detection, and export-with-secrets remain incomplete.
+This is the active implementation. It is not yet a fully certified cross-platform release: external ISP-filtered site access, privileged TUN packet flow/teardown, Windows/macOS packaging and signing, tray integration, core-version capability detection, and export-with-secrets remain incomplete. Xray native TUN is explicitly rejected; sing-box and Mihomo generate native TUN configurations. Do not interpret config validation as proof of live proxy or TUN behavior.
 
 ## Data safety
 
@@ -57,7 +58,7 @@ Settings > Core Engine > Core executable path includes a native Browse dialog. O
 
 ## Architecture and rollout
 
-See [`../docs/GO-WAILS3-REWRITE-PLAN.md`](../docs/GO-WAILS3-REWRITE-PLAN.md), [`../docs/HANDOVER.md`](../docs/HANDOVER.md), and the detailed [`../docs/GO-WAILS3-IMPLEMENTATION-HANDOVER.md`](../docs/GO-WAILS3-IMPLEMENTATION-HANDOVER.md). Keep this app parallel to Python until fixture parity, core config goldens, lifecycle, TUN and import/export acceptance tests pass.
+See [`../docs/GO-WAILS3-REWRITE-PLAN.md`](../docs/GO-WAILS3-REWRITE-PLAN.md) for the historical architecture assessment, [`../docs/HANDOVER.md`](../docs/HANDOVER.md) for the current handover, and [`../docs/GO-WAILS3-IMPLEMENTATION-HANDOVER.md`](../docs/GO-WAILS3-IMPLEMENTATION-HANDOVER.md) for implementation details. Legacy Python source is no longer part of this repository; preserve the Go `state.json` importer for existing users.
 
 ## Verification snapshot
 

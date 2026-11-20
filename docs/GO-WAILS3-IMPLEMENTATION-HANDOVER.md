@@ -3,15 +3,15 @@
 **Last updated:** 2026-11-19
 **Working branch:** `rewrite/go-wails3`
 **Implementation path:** `go-wails3/`
-**Reference implementation:** Python/PySide6 at the repository root
+**Legacy compatibility:** Python/PySide6 source has been removed; full source is preserved on `backup/main-before-go-wails3-20261119`; Go retains the legacy `state.json` importer
 
-This document records the Go rewrite work and the user-reported regressions fixed during implementation. It is intended as the starting point for another developer. It does not claim that the Go rewrite has reached full production parity with the Python application.
+This document records the active Go/Wails implementation and the user-reported regressions fixed during development. It is intended as the starting point for another developer. It does not claim that all platform, TUN and live-traffic release acceptance gates are complete.
 
 ## 1. Product boundary and status
 
 ChainPort is the control plane. It parses node and subscription data, stores workspace state and secret references, generates core configuration, and supervises external proxy-core processes. sing-box, Xray and Mihomo perform the proxy data plane.
 
-The Go/Wails application is a parallel rewrite. The Python application remains the reference implementation until migration, platform, TUN and real-traffic acceptance gates are complete. Do not remove or replace the Python application as part of routine Go work.
+The Go/Wails application is the active product implementation. The former Python/PySide6 source, test suite and dependency manifests have been removed from the active repository. The pre-removal Python suite passed 108 tests. Keep the legacy `state.json` importer and migration fixtures; no Python runtime is required.
 
 ## 2. Technology and repository layout
 
@@ -90,7 +90,7 @@ WorkspaceService.UpdateNode changes public node metadata and custom group assign
 - Legacy import supports both plural core_exe_paths and older singular core_exe_path when a path exists on the current OS. Unavailable or cross-platform paths are ignored with a migration warning.
 - Legacy subscription import also accepts auto_update_interval when update_interval is absent.
 - Deleting a subscription clears active-node and direct-node TUN references if the removed feed owned those nodes. A node still referenced by a Chain is detached from the feed and retained so the Chain remains valid.
-- The exact historical user JSON file was not supplied for a byte-for-byte reproduction. Do not claim every legacy profile is proven until a redacted copy of that file is tested.
+- The exact historical user JSON file was not supplied for a byte-for-byte reproduction. Do not claim every legacy profile is proven until a redacted copy of that file is tested. The importer is intentionally implemented in Go and does not invoke Python.
 
 ### Runtime logs and Core diagnostics
 
@@ -114,9 +114,9 @@ WorkspaceService.UpdateNode changes public node metadata and custom group assign
 
 ### ISP-blocked destination TLS handling
 
-- The Python sing-box adapter has a route-level action route-options with tls_record_fragment true for destination TLS traffic. It is scoped to sniffed TLS when protocol sniffing is enabled.
+- The former sing-box adapter used a route-level action route-options with tls_record_fragment true for destination TLS traffic. It is scoped to sniffed TLS when protocol sniffing is enabled.
 - The earlier Go adapter only enabled fragmentation on the proxy outbound's own TLS connection. That does not fragment the browser's TLS ClientHello to the destination site inside the tunnel.
-- Go now emits the route-level TLS record-fragment rule, plus the Python-compatible sniff and DNS-hijack rules. Regression tests verify rule content and ordering.
+- Go now emits the route-level TLS record-fragment rule, plus the matching sniff and DNS-hijack rules. Regression tests verify rule content and ordering.
 - Config validation and local runtime smoke tests do not prove that a particular ISP or destination site is reachable. The user must retest their own ISP path after rebuilding; do not claim live-site success from config tests alone.
 
 ### Localhost and private destination bypass — 2026-11-19
@@ -160,7 +160,7 @@ Still not certified:
 - Live ISP-specific access to missav.live, laowang.vip or other filtered destinations from the user's own network.
 - Privileged native TUN packet flow and teardown on each target OS.
 - Windows/macOS Wails packaging, signing, tray integration and full OS startup behavior.
-- Full feature parity and migration acceptance against every historical Python state/profile format.
+- Migration acceptance against every supported legacy state/profile format.
 - End-to-end UDP and every protocol/transport combination across all cores.
 
 ## 8. Safe handover rules
@@ -168,7 +168,7 @@ Still not certified:
 1. Start with `git status --short`, `git diff --check` and the current branch. Preserve unrelated user changes.
 2. Read `docs/GO-WAILS3-REWRITE-PLAN.md` and this file before changing adapters or migration behavior.
 3. Add a regression test for each reported bug. Validate generated config with the actual supported core version; a successful JSON marshal alone is not a core validation.
-4. Keep Python as the behavior reference and compare the corresponding Python adapter before changing Go routing semantics.
+4. Use committed sanitized fixtures, recorded historical behavior notes and the selected core's official configuration schema when changing routing semantics. The former Python source is not present in this repository.
 5. Do not add real subscription URLs, tokens, core configs, state databases, logs or credentials to Git.
 6. Do not describe config validation as successful live proxy traffic. State exactly which layer was tested.
 
@@ -177,7 +177,7 @@ Still not certified:
 - The SOCKS5/HTTP node editor now loads username/password on demand through `GetNodeCredentials`, which reads only those values from the OS credential vault. Workspace snapshots and SQLite still contain only opaque references. When edited, changed values are written to new vault references before old references are deleted; empty submitted fields clear a credential, while null/omitted fields preserve it. Other protocols' credentials remain protected and are not exposed by this editor.
 - `Workspace.Groups` stores user-created `NodeGroup` records in the workspace preferences payload; `Node.GroupID` assigns a node to one custom group. This is additive to `Node.SourceID`: subscription groups remain source-managed. The Base view shows All, ungrouped Customs, custom groups and subscription groups. Groups can be created, renamed and deleted; deleting a custom group clears node assignments but does not delete nodes or subscriptions.
 - Core Engine executable path has a Browse button wired to Wails' native file picker. The selected path is checked for a regular file and, on Unix, executable permission, then placed in the Settings draft. Save Settings persists it; cancelling the picker leaves the draft unchanged.
-- Chain Create/Edit now follows the Python two-column pattern: searchable Available Base Nodes on the left, ordered Chain Hops on the right, Add, Remove, Move Up and Move Down controls, plus name and local listener port fields. Double-clicking an available node also adds it. The right column order is the actual Entry-to-Exit order used by config generation.
+- Chain Create/Edit now follows the two-column Available Nodes / ordered Chain Hops pattern: searchable Available Base Nodes on the left, ordered Chain Hops on the right, Add, Remove, Move Up and Move Down controls, plus name and local listener port fields. Double-clicking an available node also adds it. The right column order is the actual Entry-to-Exit order used by config generation.
 
 ## 2026-11-19 Node editor and navigation follow-up
 
@@ -193,7 +193,7 @@ Still not certified:
 - Custom and subscription group tabs open the appropriate context menu on every right-click. Custom groups expose Add Node to Group, Rename and Delete. Subscription groups expose Rename and Delete; imported subscription nodes are source-owned and cannot be manually assigned to a subscription ID as if it were a custom group.
 - Node and Chain context menus are mutually exclusive with group menus. Their Edit/Delete/Create/Bind actions close the menu before running the operation.
 - Added a reusable `FloatingDialog` built on Base UI Dialog Root/Portal/Backdrop/Viewport/Popup. It starts centered in the current WebView, clamps initial dimensions to the viewport, scrolls content inside the panel, supports title-bar dragging, and supports corner pointer-resizing with viewport and minimum-size clamps. Node editor, Chain editor and Group manager use this component.
-- The Chain editor retains the Python-style form: name and local port at top; Available Base Nodes on the left; ordered Entry-to-Exit Chain Hops on the right; Add, Remove, Move Up and Move Down; Cancel and Save at the bottom. The builder columns grow with the resized dialog and switch to one column on narrow windows.
+- The Chain editor retains the two-column Chain editor form: name and local port at top; Available Base Nodes on the left; ordered Entry-to-Exit Chain Hops on the right; Add, Remove, Move Up and Move Down; Cancel and Save at the bottom. The builder columns grow with the resized dialog and switch to one column on narrow windows.
 - Base UI's official Dialog guidance documents `Dialog.Viewport` as the popup positioning/scroll container and shows it in the Dialog anatomy. Its documentation also notes that the built-in Dialog itself does not provide gesture support; ChainPort implements its own pointer handling for the requested move/resize behavior. See https://base-ui.com/react/components/dialog.
 - Verification for this pass: TypeScript typecheck, Vite production build, `go test ./...`, `go test -race ./...`, `go vet ./...` and `git diff --check` passed. Native desktop visual interaction (repeated right-click/delete cycles, drag and resize at different display sizes) still needs manual acceptance on the user's Wails desktop.
 

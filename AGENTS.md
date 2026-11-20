@@ -1,216 +1,99 @@
-# AGENTS.md - AI Developer Guide
+# AGENTS.md — ChainPort Gateway Developer Guide
 
-This document gives AI coding assistants the minimum project context needed to work safely and consistently in this repository.
+## Project status
 
-## Project Overview
+The active application is Go + Wails v3 + React + TypeScript. The former Python/PySide6 implementation has been removed. Do not reintroduce Python runtime dependencies or duplicate the application in another language without an explicit product decision.
 
-ChainPort Gateway is a cross-platform desktop GUI for managing proxy nodes, ordered multi-hop Chains, local proxy listeners and one TUN route.
+The Go application retains a compatibility importer for existing legacy `state.json` workspaces. This importer is the only active legacy-Python compatibility boundary; it must not require a Python runtime.
 
-Core flow:
+## Product model
 
 ```text
-Subscription URL -> Download -> Parse into Nodes -> Build Chains -> Bind Local Ports -> Generate Core Config -> Start Process
+Subscription / share URI / Clash YAML
+    -> Base Nodes
+    -> ordered Chain (entry to exit)
+    -> local port binding
+    -> external sing-box / Xray / Mihomo process
 ```
+
+A selected Base Node uses one shared local listener. Each saved Chain has one local listener. TUN targets exactly one Base Node or one complete ordered Chain; it does not create another local proxy port.
 
 ## Architecture
 
-```text
-app/     -> GUI shell and pages
-models/  -> data models and JSON persistence
-parsers/ -> subscription and URI parsing
-core/    -> core config generation and process control
-```
+All application source lives under `go-wails3/`.
 
-Dependency direction is one-way:
+| Path | Responsibility |
+|---|---|
+| `main.go` | Wails application bootstrap, window, tray and application lifecycle |
+| `internal/domain` | Workspace, node, subscription, Chain, TUN and settings models; invariants |
+| `internal/store` | SQLite persistence and schema |
+| `internal/service` | Workspace/node/group/Chain/subscription operations, scheduler and core lifecycle |
+| `internal/security` | OS credential vault and protected metadata |
+| `internal/parser` | Share URI and Clash YAML parsing |
+| `internal/core` | sing-box, Xray and Mihomo config generation |
+| `internal/runtime` | Child-process supervision, bounded/redacted logs and private config writes |
+| `internal/migration` | Legacy `state.json` import; no Python runtime dependency |
+| `internal/autostart` | Per-user OS startup registration |
+| `internal/tun` | Platform-specific TUN privilege preflight |
+| `frontend/src` | Node Groups, Base, Chain, subscriptions, Settings and Logs UI |
+| `frontend/bindings` | Generated Wails TypeScript bindings; never hand-edit |
 
-```text
-app/ -> models/
-app/ -> parsers/
-app/ -> core/ -> models/
-parsers/ -> models/
-models/ -> no local package dependencies
-```
+Keep dependency direction explicit: domain has no application-layer dependencies; store/security are infrastructure; services orchestrate domain and infrastructure; adapters consume resolved domain data; frontend calls exported Wails service APIs.
 
-## Data Models
+## Core invariants
 
-| Class | File | Purpose |
-| :---- | :--- | :------ |
-| `Node` | `models/node.py` | One proxy node |
-| `Subscription` | `models/subscription.py` | One provider source |
-| `Chain` | `models/chain.py` | Ordered hop list of node ids |
-| `PortMapping` | `models/port_mapping.py` | Local port bound to a chain |
-| `AppState` | `models/app_state.py` | Global app state and persistence |
+- Preserve Chain hop order exactly: entry -> intermediate hops -> exit.
+- Every Chain has one unique local listener port; do not collide with the Base listener or another Chain.
+- A Chain TUN binding targets the whole Chain, not its final hop.
+- Localhost, loopback and private-network bypass rules must precede the inbound-to-Chain fallback.
+- DNS bootstrap must not resolve the remote DoH hostname through itself.
+- Never put plaintext credentials in Workspace snapshots, SQLite, logs, fixtures or support bundles. Use opaque vault references.
+- Do not log subscription URLs, authorization headers, passwords, UUIDs or private keys.
+- Validate generated config with the selected real core binary; JSON/YAML serialization alone is not core validation.
+- Config validation is not proof of live traffic or privileged TUN packet flow.
 
-All models implement:
+## Frontend and UI
 
-- `to_dict() -> dict`
-- `from_dict(dict) -> Self`
-- `__repr__() -> str`
+Use English for all user-facing UI text, notifications and errors. Keep terminology consistent: Node Groups, Base, Chain, Settings, subscription source, port binding.
 
-## Core Adapters
-
-`core/core_adapter_base.py` defines:
-
-```python
-class CoreAdapterBase(ABC):
-    def generate_config(app_state) -> tuple[str, str]
-    def get_check_command(config_path, exe_path) -> list[str]
-    def get_start_command(config_path, exe_path) -> list[str]
-```
-
-Current implementations:
-
-| Adapter | Chain Field | Config Format |
-| :------ | :---------- | :------------ |
-| `SingBoxAdapter` | `detour` | JSON |
-| `XrayAdapter` | `streamSettings.sockopt.dialerProxy` | JSON |
-| `MihomoAdapter` | `dialer-proxy` | YAML |
-
-Chain outbound naming rule:
-
-```text
-CHAIN_{chain_id}_H{hop_number}
-```
-
-## Parsers
-
-Primary entry points:
-
-```python
-nodes, errors = fetch_and_parse(subscription)
-nodes, errors = parse_text_only(raw_text, sub_name, sub_type)
-```
-
-Auto-detection rules:
-
-- If the content contains `proxies:`, treat it as Clash YAML
-- Otherwise treat it as v2rayN text, with optional base64 decoding
-
-Supported URI schemes in `parsers/uri_parsers.py`:
-
-`vmess://`, `vless://`, `trojan://`, `ss://`, `socks5://`, `socks://`, `http://`, `https://`
-
-Parser errors should be actionable and include location plus reason.
-
-## GUI Pages
-
-The active UI has exactly two top-level tabs:
-
-| Tab / subtab | File | Responsibility |
-| :--- | :--- | :--- |
-| Node Groups / Base | `app/ui_pages_node_groups.py`, `app/ui_pages_base_nodes.py` | Base Node table, subscription source tabs, node context menu, active Base selection and Base-node TUN binding. |
-| Node Groups / Chain | `app/ui_pages_node_groups.py`, `app/ui_pages_chains.py` | Saved ordered Chains, one local port per Chain, create/edit/remove and whole-Chain TUN binding. |
-| Settings | `app/ui_pages_settings.py` | Core executable, DNS, network/fragment options, startup behavior and profile import/export. |
-| Runtime Logs dialog | `app/ui_pages_logs.py` | Live core stdout/stderr, validation output, clear/copy snapshot. Open only from the global Logs control; Start must not open it automatically. |
-
-Dialogs:
-
-| File | Responsibility |
-| :--- | :--- |
-| `app/dialogs/chain_editor_dialog.py` | Create/edit Chain name, ordered hops and its local listen port. |
-| `app/dialogs/node_edit_dialog.py` | Edit one Base Node. |
-| `app/dialogs/subscription_edit_dialog.py` | Create/edit a subscription source. |
-| `app/dialogs/subscription_manager_dialog.py` | Manage sources and trigger updates. |
-
-`app/ui_main_window.py` owns the two top-level tabs and global Logs/status/TUN/Shared Port/Start-Stop toolbar. It generates and validates the selected core config before starting the external process, bridges background logs into the GUI thread with `LogBridge(QObject)` and `Signal`, and saves `state.json` when pages emit `data_changed`.
-
-TUN binding is exactly one target: one Base Node or one complete ordered Chain. A Chain binding must preserve all hops and order; never convert it to one hop. `AppState.tun_chain_id` stores the full Chain binding, while `tun_node_id` stores a Base Node binding.
-
-For the verified current architecture, migration assessment and handover plan, read `docs/GO-WAILS3-REWRITE-PLAN.md`. Older audits and task notes may describe a previous multi-tab UI and are historical only.
-
-## Language And UI Policy
-
-- All user-facing UI text must be English
-- All dialogs, notifications, runtime logs, parser error messages, and generated default display names must be English
-- New or modified comments and docstrings should be English
-- Keep Node Groups, Base, Chain, Settings and the global action bar terminology consistent across UI and docs
-
-Preferred product terms:
-
-- Use `source` or `subscription source` instead of untranslated provider wording
-- Use `binding` or `port binding` when describing the UI
-- Use `Chain` for a saved ordered route; each Chain has one local proxy port
-
-## Coding Conventions
-
-### Naming
-
-- Variables use `snake_case`
-- Constants use `UPPER_SNAKE_CASE`
-- Classes use `PascalCase`
-
-### Functions
-
-- Prefer functions at or under 40 lines when practical
-- Keep each file focused on one responsibility
-- Add type hints to all functions
-
-### Error Handling
-
-- Parsing should collect recoverable errors into `error_messages: list[str]`
-- Error messages should include location, content preview, and a concrete reason when possible
-- `fetch_and_parse()` should not raise for normal parsing failures; return errors instead
-
-## Testing
-
-Primary verification commands:
+Use the installed shadcn/ui source-owned Base UI components. Do not add Radix primitives without an explicit migration decision. Keep Wails bindings generated:
 
 ```bash
-python -m pytest tests/ -q
-python -m compileall app core models parsers
+wails3 generate bindings -i -ts
 ```
 
-Recommended Qt smoke test for UI-impacting changes:
+## Coding conventions
+
+- Go: idiomatic names, small focused packages, explicit error handling, context propagation for I/O, and synchronization scoped to shared state.
+- TypeScript: strict types; avoid `any`; clean up event subscriptions and listeners.
+- Add regression tests for every bug fix, especially routing order, secret handling, import compatibility and process lifecycle.
+- Do not silently ignore unsupported protocol/core combinations; return actionable errors.
+
+## Verification
+
+Run from `go-wails3/`:
 
 ```bash
-set QT_QPA_PLATFORM=offscreen
-python -c "from PySide6.QtWidgets import QApplication; from models.app_state import AppState; from app.ui_main_window import MainWindow; app = QApplication([]); MainWindow(AppState()); print('ok')"
+gofmt -w main.go internal
+go test ./...
+go test -race ./...
+go vet ./...
+wails3 generate bindings -i -ts
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend run typecheck
+pnpm --dir frontend run build
+wails3 build
+git diff --check
 ```
 
-Important coverage areas:
+For Linux packaging, see `build/linux/Taskfile.yml`. Cross-compilation does not replace native platform packaging and runtime tests.
 
-- `tests/test_clash_parser.py`
-- `tests/test_v2rayn_parser.py`
-- `tests/test_chain_building.py`
-- `tests/test_singbox_adapter.py`
+## Data safety and Git
 
-## Adding Support
+Never commit workspace databases, legacy `state.json`, subscription URLs/tokens, core configs, logs, credentials or private keys. Preserve the legacy importer and test it with redacted fixtures.
 
-### Add a New URI Protocol
+Before changing code, inspect `git status --short --branch`, read `docs/HANDOVER.md` and the detailed implementation handover. Preserve unrelated worktree changes. Use small commits and review the complete diff before pushing or merging.
 
-1. Add `parse_xxx_uri()` in `parsers/uri_parsers.py`
-2. Add a matching branch in `parse_single_uri()`
-3. Add a node type constant in `models/node.py`
-4. Add outbound support in each relevant adapter
-5. Add tests in `tests/test_v2rayn_parser.py`
+## Graphify
 
-### Add a New Core Engine
-
-1. Add `core/xxx_adapter.py` and inherit from `CoreAdapterBase`
-2. Implement `generate_config()`, `get_check_command()`, and `get_start_command()`
-3. Add the adapter branch in `app/ui_main_window.py`
-4. Add the UI option in `app/ui_pages_settings.py`
-
-## Important Paths
-
-| Purpose | Path |
-| :------ | :--- |
-| App state | `./state.json` |
-| sing-box config | `./singbox_config.json` |
-| Xray config | `./xray_config.json` |
-| Mihomo config | `./mihomo_config.yaml` |
-
-@RTK.md
-
-## graphify
-
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
-
-When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
-
-Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+If `graphify-out/graph.json` exists, run `graphify query` for codebase navigation before broad source browsing. After structural code changes, run `graphify update .` to refresh the graph. Graph output is generated analysis, not application source.

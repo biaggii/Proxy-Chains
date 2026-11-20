@@ -1,29 +1,31 @@
-# Task Board
-> **ARCHIVED / HISTORICAL:** This board records the first implementation pass and references obsolete page names. See [`docs/GO-WAILS3-REWRITE-PLAN.md`](docs/GO-WAILS3-REWRITE-PLAN.md) for current status and next phases.
-## TODO
-(None)
+# ChainPort Gateway — Current Task Board
 
-## DOING
-(None)
+The former Python implementation task list is archived in Git history. The active application is under `go-wails3/`.
 
-## DONE
-- [x] Models: node.py, subscription.py, chain.py, port_mapping.py, app_state.py
-- [x] Parsers: Clash YAML (clash_yaml_parser.py)
-- [x] Parsers: v2rayN base64/plaintext (v2rayn_parser.py)
-- [x] Parsers: URI parsing vmess/vless/trojan/ss/socks5/http (uri_parsers.py)
-- [x] Parsers: subscription_fetcher.py (Download+Auto-detect+Parse)
-- [x] Core: core_adapter_base.py (Abstract base)
-- [x] Core: singbox_adapter.py (Multi-port + Multi-hop detour)
-- [x] Core: xray_adapter.py (Multi-port + Multi-hop proxySettings)
-- [x] Core: mihomo_adapter.py (listeners + dialer-proxy)
-- [x] Core: process_runner.py (Process management + log reading)
-- [x] UI: ui_main_window.py (Main window + Tabs + Global Apply/Start/Stop)
-- [x] UI: ui_pages_subscriptions.py
-- [x] UI: ui_pages_nodes.py
-- [x] UI: ui_pages_chains.py (Includes Wrap Socks5)
-- [x] UI: ui_pages_ports.py (Includes Batch Create)
-- [x] UI: ui_pages_logs.py
-- [x] UI: ui_pages_settings.py
-- [x] main.py (Entry point)
-- [x] README.md / build_windows_exe.md
-- [x] Tests: 47 tests all passed (pytest)
+## Release acceptance still required
+
+- [ ] Validate generated configurations against pinned sing-box, Xray and Mihomo binaries in CI.
+- [ ] Add sanitized golden configuration fixtures for Base, multi-hop Chains, DNS, TLS fragmentation, QUIC and TUN.
+- [ ] Run end-to-end Base/Chain TCP and UDP traffic tests.
+- [ ] Verify DNS routing and local/private destination bypass across all cores.
+- [ ] Complete privileged TUN packet-flow and teardown tests on Linux, Windows and macOS.
+- [ ] Complete Windows/macOS Wails packaging, signing, tray and startup acceptance.
+- [ ] Complete secret-safe export/support bundle workflows.
+- [ ] Document upgrade/rollback and legacy workspace migration recovery.
+
+## Verification commands
+
+Run from `go-wails3/`:
+
+```bash
+gofmt -w main.go internal
+go test ./...
+go test -race ./...
+go vet ./...
+wails3 generate bindings -i -ts
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend run typecheck
+pnpm --dir frontend run build
+wails3 build
+git diff --check
+```

@@ -17,8 +17,9 @@ The active implementation includes:
 - Core preflight, process Start/Stop, bounded logs and secret redaction.
 - Legacy `state.json` import into the Go workspace and OS credential vault.
 - Per-user startup registration and platform-specific TUN privilege preflight.
+- Independent Profiles backed by separate SQLite databases, configurable data-root migration, portable Settings JSON import/export, and password-encrypted full-profile backup/restore.
 
-The former Python/PySide6 application and its runtime dependencies have been removed from the active repository. Its source is preserved on `backup/main-before-go-wails3-20261119` (baseline commit `790a35b`). The Python test suite passed 108 tests immediately before removal. Existing users can still import legacy `state.json`; no Python installation is required.
+The former Python/PySide6 application and its runtime dependencies have been removed from the active repository. Its source is preserved on `backup/main-before-go-wails3-20261119` (baseline commit `790a35b`). The Python test suite passed 108 tests immediately before removal. Existing users can still import legacy `state.json`; no Python installation is required. The default profile reuses the pre-profile `chainport.db` path so existing workspace data is retained.
 
 ## Start here
 
@@ -47,7 +48,7 @@ The Linux executable is `go-wails3/bin/chainport`. Linux package tasks are in `g
 
 ## Verification boundaries
 
-Passing Go tests, config checks and desktop builds does not prove external-site connectivity, full UDP behavior, privileged TUN packet flow or release packaging parity. Xray native TUN is explicitly unsupported. Native TUN and OS lifecycle behavior still require platform integration tests. Windows/macOS packaging and signing, tray behavior and full release acceptance remain open.
+Passing Go tests, config checks and desktop builds does not prove external-site connectivity, full UDP behavior, privileged TUN packet flow or release packaging parity. Xray native TUN is explicitly unsupported. Native TUN and OS lifecycle behavior still require platform integration tests. Windows/macOS packaging and signing, tray behavior and full release acceptance remain open. Profile backup encryption, profile switching/data-root migration and settings import/export have unit coverage; exercise the native file/directory dialogs and backup recovery manually on each desktop OS before release.
 
 ## Git handover
 

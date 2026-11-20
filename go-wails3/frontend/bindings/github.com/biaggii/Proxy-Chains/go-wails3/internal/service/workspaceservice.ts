@@ -13,6 +13,9 @@ import * as domain$0 from "../domain/models.js";
 import * as migration$0 from "../migration/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as profiles$0 from "../profiles/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as runtime$0 from "../runtime/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -56,6 +59,10 @@ export function CreateNodeGroup(name: string): $CancellablePromise<domain$0.Work
     return $Call.ByID(3770822088, name);
 }
 
+export function CreateProfile(name: string): $CancellablePromise<profiles$0.State> {
+    return $Call.ByID(2699978874, name);
+}
+
 export function CreateSubscription(input: $models.CreateSubscriptionInput): $CancellablePromise<domain$0.Workspace> {
     return $Call.ByID(2651799224, input);
 }
@@ -72,8 +79,20 @@ export function DeleteNodeGroup(id: string): $CancellablePromise<domain$0.Worksp
     return $Call.ByID(701266749, id);
 }
 
+export function DeleteProfile(id: string): $CancellablePromise<profiles$0.State> {
+    return $Call.ByID(2040442947, id);
+}
+
 export function DeleteSubscription(id: string): $CancellablePromise<domain$0.Workspace> {
     return $Call.ByID(3270074515, id);
+}
+
+export function ExportProfileBackup(password: string): $CancellablePromise<boolean> {
+    return $Call.ByID(1081685998, password);
+}
+
+export function ExportSettings(): $CancellablePromise<void> {
+    return $Call.ByID(1757276130);
 }
 
 /**
@@ -82,6 +101,10 @@ export function DeleteSubscription(id: string): $CancellablePromise<domain$0.Wor
  */
 export function GetNodeCredentials(nodeID: string): $CancellablePromise<$models.NodeCredentials> {
     return $Call.ByID(3977125331, nodeID);
+}
+
+export function GetProfileState(): $CancellablePromise<profiles$0.State> {
+    return $Call.ByID(2676566393);
 }
 
 export function GetRuntimeLogs(): $CancellablePromise<string[] | null> {
@@ -100,6 +123,18 @@ export function ImportLegacyStateFile(): $CancellablePromise<migration$0.Migrati
     return $Call.ByID(548160950);
 }
 
+export function ImportProfileBackup(password: string): $CancellablePromise<domain$0.Workspace> {
+    return $Call.ByID(3375085567, password);
+}
+
+export function ImportSettings(): $CancellablePromise<domain$0.Workspace> {
+    return $Call.ByID(1096868749);
+}
+
+export function MoveDataLocation(path: string): $CancellablePromise<profiles$0.State> {
+    return $Call.ByID(1155965895, path);
+}
+
 /**
  * MoveNodeToGroup moves a node out of its previous group. Moving an imported
  * subscription node detaches it from the feed so refresh/delete operations no
@@ -116,6 +151,10 @@ export function PickCoreExecutable(coreName: string): $CancellablePromise<string
     return $Call.ByID(3724236635, coreName);
 }
 
+export function PickDataLocation(): $CancellablePromise<string> {
+    return $Call.ByID(2793027859);
+}
+
 export function RefreshAllSubscriptions(): $CancellablePromise<[domain$0.Workspace, string[] | null]> {
     return $Call.ByID(2965895015);
 }
@@ -130,6 +169,10 @@ export function RenameCustomNodesGroup(name: string): $CancellablePromise<domain
 
 export function RenameNodeGroup(id: string, name: string): $CancellablePromise<domain$0.Workspace> {
     return $Call.ByID(1769570494, id, name);
+}
+
+export function RenameProfile(id: string, name: string): $CancellablePromise<profiles$0.State> {
+    return $Call.ByID(80649064, id, name);
 }
 
 export function RenameSubscription(id: string, name: string): $CancellablePromise<domain$0.Workspace> {
@@ -162,6 +205,10 @@ export function StartSubscriptionScheduler(): $CancellablePromise<void> {
 
 export function StopCore(): $CancellablePromise<void> {
     return $Call.ByID(1138971410);
+}
+
+export function SwitchProfile(id: string): $CancellablePromise<[domain$0.Workspace, profiles$0.State]> {
+    return $Call.ByID(1981659950, id);
 }
 
 export function UpdateChain(input: $models.UpdateChainInput): $CancellablePromise<domain$0.Workspace> {

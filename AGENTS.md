@@ -27,7 +27,8 @@ All application source lives under `go-wails3/`.
 | `main.go` | Wails application bootstrap, window, tray and application lifecycle |
 | `internal/domain` | Workspace, node, subscription, Chain, TUN and settings models; invariants |
 | `internal/store` | SQLite persistence and schema |
-| `internal/service` | Workspace/node/group/Chain/subscription operations, scheduler and core lifecycle |
+| `internal/profiles` | Independent profile databases, active profile index and data-root relocation |
+| `internal/service` | Workspace/node/group/Chain/subscription operations, scheduler, core lifecycle, profile management, settings transfer and encrypted profile backup/restore |
 | `internal/security` | OS credential vault and protected metadata |
 | `internal/parser` | Share URI and Clash YAML parsing |
 | `internal/core` | sing-box, Xray and Mihomo config generation |
@@ -47,7 +48,7 @@ Keep dependency direction explicit: domain has no application-layer dependencies
 - A Chain TUN binding targets the whole Chain, not its final hop.
 - Localhost, loopback and private-network bypass rules must precede the inbound-to-Chain fallback.
 - DNS bootstrap must not resolve the remote DoH hostname through itself.
-- Never put plaintext credentials in Workspace snapshots, SQLite, logs, fixtures or support bundles. Use opaque vault references.
+- Never put plaintext credentials in Workspace snapshots, SQLite, logs, fixtures or support bundles. Use opaque vault references. Full-profile backup must encrypt all vault values; Settings-only JSON must exclude credentials and machine-specific paths.
 - Do not log subscription URLs, authorization headers, passwords, UUIDs or private keys.
 - Validate generated config with the selected real core binary; JSON/YAML serialization alone is not core validation.
 - Config validation is not proof of live traffic or privileged TUN packet flow.
@@ -66,7 +67,7 @@ wails3 generate bindings -i -ts
 
 - Go: idiomatic names, small focused packages, explicit error handling, context propagation for I/O, and synchronization scoped to shared state.
 - TypeScript: strict types; avoid `any`; clean up event subscriptions and listeners.
-- Add regression tests for every bug fix, especially routing order, secret handling, import compatibility and process lifecycle.
+- Add regression tests for every bug fix, especially routing order, secret handling, import compatibility, profile isolation/data relocation and process lifecycle.
 - Do not silently ignore unsupported protocol/core combinations; return actionable errors.
 
 ## Verification

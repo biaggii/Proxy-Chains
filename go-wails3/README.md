@@ -37,16 +37,18 @@ Never edit generated bindings manually.
 
 - `internal/domain`: typed workspace model, user-managed node groups and invariant validation.
 - `internal/store`: SQLite schema v1, transactional workspace persistence.
-- `internal/service`: workspace, node, custom-group, Chain and subscription CRUD; bounded HTTP refresh; stale-node reconciliation; scheduler; native core executable selection; core lifecycle.
+- `internal/profiles`: independent SQLite-backed profiles, active profile index and safe data-root relocation.
+- `internal/service`: workspace, node, custom-group, Chain and subscription CRUD; bounded HTTP refresh; stale-node reconciliation; scheduler; native core executable selection; core lifecycle; profile management; Settings JSON transfer; encrypted profile backup/restore.
 - `internal/security`: OS keyring integration and compressed metadata encoding; no plaintext fallback.
 - `internal/parser`: VMess, VLESS, Trojan, Shadowsocks, SOCKS/HTTP share links and Clash YAML parsing.
 - `internal/core`: sing-box, Xray and Mihomo configuration generation, ordered outbound chains, DNS and TUN route construction.
+- Base and per-Chain listeners accept SOCKS4/4a/5 and HTTP on one mixed-protocol port. The Base Mixed port is edited in the Base Nodes toolbar; stop the core before changing it.
 - `internal/runtime`: core process supervisor, bounded/redacted logs and atomic private config writes.
 - `internal/migration`: legacy `state.json` importer with vault migration and Chain-wrapper expansion.
 - `internal/autostart` and `internal/tun`: per-OS startup registration and TUN privilege preflight.
 - `frontend/src`: Base / Chain / custom node groups / subscriptions / Settings / runtime controls and log view.
 
-This is the active implementation. It is not yet a fully certified cross-platform release: external ISP-filtered site access, privileged TUN packet flow/teardown, Windows/macOS packaging and signing, tray integration, core-version capability detection, and export-with-secrets remain incomplete. Xray native TUN is explicitly rejected; sing-box and Mihomo generate native TUN configurations. Do not interpret config validation as proof of live proxy or TUN behavior.
+Settings includes independent Profiles, data-root relocation, portable Settings-only JSON import/export and AES-GCM encrypted full-profile backup/restore. This is the active implementation. It is not yet a fully certified cross-platform release: external ISP-filtered site access, privileged TUN packet flow/teardown, Windows/macOS packaging and signing, tray integration, core-version capability detection, and platform-specific native file dialog behavior remain subject to manual release acceptance. Xray native TUN is explicitly rejected; sing-box and Mihomo generate native TUN configurations. Do not interpret config validation as proof of live proxy or TUN behavior.
 
 ## Data safety
 

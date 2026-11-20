@@ -20,6 +20,7 @@ import (
 	"github.com/biaggii/Proxy-Chains/go-wails3/internal/core"
 	"github.com/biaggii/Proxy-Chains/go-wails3/internal/domain"
 	"github.com/biaggii/Proxy-Chains/go-wails3/internal/migration"
+	"github.com/biaggii/Proxy-Chains/go-wails3/internal/profiles"
 	runtimecore "github.com/biaggii/Proxy-Chains/go-wails3/internal/runtime"
 	"github.com/biaggii/Proxy-Chains/go-wails3/internal/security"
 	"github.com/biaggii/Proxy-Chains/go-wails3/internal/tun"
@@ -38,11 +39,25 @@ type WorkspaceService struct {
 	secrets                 security.SecretStore
 	selectLegacyFile        func() (string, error)
 	selectExecutable        func(string) (string, error)
+	selectDirectory         func() (string, error)
+	selectOpenFile          func(string) (string, error)
+	selectSaveFile          func(string) (string, error)
 	supervisor              *runtimecore.Supervisor
 	configDir               string
 	activeConfigPath        string
 	schedulerStarted        bool
 	refreshingSubscriptions map[string]*subscriptionRefreshCall
+}
+
+type profileWorkspaceStore interface {
+	WorkspaceStore
+	State() profiles.State
+	Create(string) (profiles.Profile, error)
+	Rename(string, string) error
+	Delete(string) error
+	Switch(string) (domain.Workspace, error)
+	LoadProfile(string) (domain.Workspace, error)
+	MoveDataLocation(string) error
 }
 
 type subscriptionRefreshCall struct {
@@ -126,6 +141,11 @@ func NewWorkspaceServiceWithPickers(ctx context.Context, store WorkspaceStore, s
 	}
 	configDir := state.Settings.ConfigOutputDir
 	if configDir == "" {
+		if manager, ok := store.(interface{ State() profiles.State }); ok {
+			configDir = filepath.Join(manager.State().DataLocation, "runtime")
+		}
+	}
+	if configDir == "" {
 		base, err := os.UserConfigDir()
 		if err != nil {
 			return nil, err
@@ -191,6 +211,164 @@ func (s *WorkspaceService) GetWorkspace() domain.Workspace {
 	return cloneWorkspace(s.state)
 }
 
+func ConfigureFileDialogs(s *WorkspaceService, selectDirectory func() (string, error), selectOpenFile func(string) (string, error), selectSaveFile func(string) (string, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.selectDirectory = selectDirectory
+	s.selectOpenFile = selectOpenFile
+	s.selectSaveFile = selectSaveFile
+}
+
+func (s *WorkspaceService) GetProfileState() profiles.State {
+	s.mu.RLock()
+	manager, _ := s.store.(profileWorkspaceStore)
+	s.mu.RUnlock()
+	if manager == nil {
+		return profiles.State{}
+	}
+	return manager.State()
+}
+
+func (s *WorkspaceService) CreateProfile(name string) (profiles.State, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	manager, ok := s.store.(profileWorkspaceStore)
+	if !ok {
+		return profiles.State{}, errors.New("profile manager is unavailable")
+	}
+	if len(s.refreshingSubscriptions) > 0 {
+		return profiles.State{}, errors.New("wait for subscription refreshes to finish before managing profiles")
+	}
+	if _, err := manager.Create(name); err != nil {
+		return profiles.State{}, err
+	}
+	return manager.State(), nil
+}
+
+func (s *WorkspaceService) RenameProfile(id, name string) (profiles.State, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	manager, ok := s.store.(profileWorkspaceStore)
+	if !ok {
+		return profiles.State{}, errors.New("profile manager is unavailable")
+	}
+	if err := manager.Rename(id, name); err != nil {
+		return profiles.State{}, err
+	}
+	return manager.State(), nil
+}
+
+func (s *WorkspaceService) DeleteProfile(id string) (profiles.State, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	manager, ok := s.store.(profileWorkspaceStore)
+	if !ok {
+		return profiles.State{}, errors.New("profile manager is unavailable")
+	}
+	if len(s.refreshingSubscriptions) > 0 {
+		return profiles.State{}, errors.New("wait for subscription refreshes to finish before managing profiles")
+	}
+	workspace, err := manager.LoadProfile(id)
+	if err != nil {
+		return profiles.State{}, err
+	}
+	if err := manager.Delete(id); err != nil {
+		return profiles.State{}, err
+	}
+	if s.secrets != nil && s.secrets.Available() {
+		for _, reference := range workspaceSecretReferences(workspace) {
+			if err := s.secrets.Delete(s.appContext, reference); err != nil {
+				return manager.State(), fmt.Errorf("profile deleted, but credential cleanup failed for %q: %w", reference, err)
+			}
+		}
+	}
+	return manager.State(), nil
+}
+
+func (s *WorkspaceService) SwitchProfile(id string) (domain.Workspace, profiles.State, error) {
+	s.mu.RLock()
+	manager, ok := s.store.(profileWorkspaceStore)
+	refreshing := len(s.refreshingSubscriptions) > 0
+	s.mu.RUnlock()
+	if !ok {
+		return domain.Workspace{}, profiles.State{}, errors.New("profile manager is unavailable")
+	}
+	if refreshing {
+		return domain.Workspace{}, profiles.State{}, errors.New("wait for subscription refreshes to finish before switching profiles")
+	}
+	if id == manager.State().ActiveProfileID {
+		return s.GetWorkspace(), manager.State(), nil
+	}
+	if err := s.StopCore(); err != nil {
+		return domain.Workspace{}, profiles.State{}, fmt.Errorf("stop the core before switching profiles: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.refreshingSubscriptions) > 0 {
+		return domain.Workspace{}, profiles.State{}, errors.New("wait for subscription refreshes to finish before switching profiles")
+	}
+	previousProfileID := manager.State().ActiveProfileID
+	previousStartup := s.state.Settings.RunOnStartup
+	workspace, err := manager.Switch(id)
+	if err != nil {
+		return domain.Workspace{}, profiles.State{}, err
+	}
+	if workspace.Settings.RunOnStartup != previousStartup {
+		if err := autostart.SetEnabled(workspace.Settings.RunOnStartup); err != nil {
+			rollbackWorkspace, rollbackErr := manager.Switch(previousProfileID)
+			if rollbackErr == nil {
+				s.state = rollbackWorkspace
+				_ = autostart.SetEnabled(previousStartup)
+			}
+			if rollbackErr != nil {
+				return domain.Workspace{}, profiles.State{}, fmt.Errorf("update startup registration: %v; profile rollback failed: %w", err, rollbackErr)
+			}
+			return domain.Workspace{}, profiles.State{}, fmt.Errorf("update system startup registration: %w", err)
+		}
+	}
+	s.state = workspace
+	s.configDir = profileRuntimeDir(manager.State().DataLocation, workspace.Settings)
+	return cloneWorkspace(workspace), manager.State(), nil
+}
+
+func (s *WorkspaceService) PickDataLocation() (string, error) {
+	s.mu.RLock()
+	picker := s.selectDirectory
+	s.mu.RUnlock()
+	if picker == nil {
+		return "", errors.New("directory picker is unavailable")
+	}
+	return picker()
+}
+
+func (s *WorkspaceService) MoveDataLocation(path string) (profiles.State, error) {
+	if err := s.StopCore(); err != nil {
+		return profiles.State{}, fmt.Errorf("stop the core before moving data: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	manager, ok := s.store.(profileWorkspaceStore)
+	if !ok {
+		return profiles.State{}, errors.New("profile manager is unavailable")
+	}
+	if len(s.refreshingSubscriptions) > 0 {
+		return profiles.State{}, errors.New("wait for subscription refreshes to finish before moving data")
+	}
+	if err := manager.MoveDataLocation(path); err != nil {
+		return profiles.State{}, err
+	}
+	state := manager.State()
+	s.configDir = profileRuntimeDir(state.DataLocation, s.state.Settings)
+	return state, nil
+}
+
+func profileRuntimeDir(root string, settings domain.Settings) string {
+	if strings.TrimSpace(settings.ConfigOutputDir) != "" {
+		return settings.ConfigOutputDir
+	}
+	return filepath.Join(root, "runtime")
+}
+
 func (s *WorkspaceService) UpdateSettings(settings domain.Settings) (domain.Workspace, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -201,6 +379,9 @@ func (s *WorkspaceService) UpdateSettings(settings domain.Settings) (domain.Work
 	}
 	if s.supervisor != nil && s.supervisor.Snapshot().Status == runtimecore.StatusRunning && settings.Core.Type != s.state.Settings.Core.Type {
 		return domain.Workspace{}, errors.New("stop the running core before changing the selected core")
+	}
+	if s.supervisor != nil && s.supervisor.Snapshot().Status == runtimecore.StatusRunning && (settings.BaseListenHost != s.state.Settings.BaseListenHost || settings.BaseListenPort != s.state.Settings.BaseListenPort) {
+		return domain.Workspace{}, errors.New("stop the running core before changing the mixed listener host or port")
 	}
 	previousStartup := s.state.Settings.RunOnStartup
 	if settings.RunOnStartup != previousStartup {

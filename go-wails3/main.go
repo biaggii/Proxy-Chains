@@ -7,12 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/biaggii/Proxy-Chains/go-wails3/internal/autostart"
+	"github.com/biaggii/Proxy-Chains/go-wails3/internal/profiles"
 	runtimecore "github.com/biaggii/Proxy-Chains/go-wails3/internal/runtime"
 	"github.com/biaggii/Proxy-Chains/go-wails3/internal/security"
 	"github.com/biaggii/Proxy-Chains/go-wails3/internal/service"
-	"github.com/biaggii/Proxy-Chains/go-wails3/internal/store"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -28,17 +29,18 @@ func main() {
 	if err != nil {
 		log.Fatalf("resolve user config directory: %v", err)
 	}
-	database, err := store.OpenSQLite(filepath.Join(configDir, "ChainPort Gateway", "chainport.db"))
+	dataRoot := filepath.Join(configDir, "ChainPort Gateway")
+	profileManager, err := profiles.Open(dataRoot, filepath.Join(configDir, "ChainPort Gateway.location.json"))
 	if err != nil {
-		log.Fatalf("open application database: %v", err)
+		log.Fatalf("open profile manager: %v", err)
 	}
-	defer database.Close()
+	defer profileManager.Close()
 
 	secretStore := security.NewOSKeyringStore()
 	appContext, cancelApp := context.WithCancel(context.Background())
 	defer cancelApp()
 	var app *application.App
-	workspaceService, err := service.NewWorkspaceServiceWithPickers(appContext, database, secretStore, func() (string, error) {
+	workspaceService, err := service.NewWorkspaceServiceWithPickers(appContext, profileManager, secretStore, func() (string, error) {
 		if app == nil {
 			return "", nil
 		}
@@ -62,6 +64,28 @@ func main() {
 	if err != nil {
 		log.Fatalf("load application workspace: %v", err)
 	}
+	service.ConfigureFileDialogs(workspaceService, func() (string, error) {
+		if app == nil {
+			return "", nil
+		}
+		return app.Dialog.OpenFile().SetTitle("Choose ChainPort data directory").CanChooseFiles(false).CanChooseDirectories(true).CanCreateDirectories(true).PromptForSingleSelection()
+	}, func(title string) (string, error) {
+		if app == nil {
+			return "", nil
+		}
+		return app.Dialog.OpenFile().SetTitle(title).AddFilter("ChainPort Settings / Profile Backup", "*.json;*.cpbackup").PromptForSingleSelection()
+	}, func(title string) (string, error) {
+		if app == nil {
+			return "", nil
+		}
+		dialog := app.Dialog.SaveFile()
+		filename := "chainport-settings.json"
+		if strings.Contains(strings.ToLower(title), "backup") {
+			filename = "chainport-profile.cpbackup"
+		}
+		dialog.SetOptions(&application.SaveFileDialogOptions{Title: title, Filename: filename})
+		return dialog.AddFilter("ChainPort Settings / Profile Backup", "*.json;*.cpbackup").PromptForSingleSelection()
+	})
 	if err := autostart.SetEnabled(workspaceService.GetWorkspace().Settings.RunOnStartup); err != nil {
 		log.Printf("could not synchronize system startup registration: %v", err)
 	}

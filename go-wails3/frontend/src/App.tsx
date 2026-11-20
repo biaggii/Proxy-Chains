@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Events } from "@wailsio/runtime";
-import { Activity, Check, CircleHelp, Copy, FileText, FolderInput, Layers3, Network, Pencil, Search, Settings2, Shield, ShieldCheck, SlidersHorizontal, Waypoints, Rss, Plus, Trash2, Edit3 } from "lucide-react";
+import { Activity, Check, CircleHelp, Copy, FileText, FolderInput, Layers3, Network, Pencil, Search, Settings2, Shield, ShieldCheck, SlidersHorizontal, Waypoints, Rss, Plus, Trash2, Edit3, Database, FolderOpen, Download, Upload, KeyRound } from "lucide-react";
 import { WorkspaceService } from "../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/service";
 import { Protocol } from "../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/domain";
 import type { Chain, Node, Workspace } from "../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/domain";
+import type { State as ProfileState } from "../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/profiles";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -50,6 +51,15 @@ function App() {
   const [subscriptionBusyID,setSubscriptionBusyID]=useState<string|null>(null);
   const [settingsDraft,setSettingsDraft]=useState<Workspace["settings"]|null>(null);
   const [settingsBusy,setSettingsBusy]=useState(false);
+  const [profileState,setProfileState]=useState<ProfileState|null>(null);
+  const [selectedProfileID,setSelectedProfileID]=useState("");
+  const [profileBusy,setProfileBusy]=useState(false);
+  const [profileDialogMode,setProfileDialogMode]=useState<"create"|"rename"|null>(null);
+  const [profileNameDraft,setProfileNameDraft]=useState("");
+  const [backupDialogMode,setBackupDialogMode]=useState<"export"|"import"|null>(null);
+  const [backupPassword,setBackupPassword]=useState("");
+  const [backupPasswordConfirm,setBackupPasswordConfirm]=useState("");
+  const [mixedPortDraft,setMixedPortDraft]=useState("10808");
 
   useEffect(() => {
     WorkspaceService.GetWorkspace()
@@ -57,6 +67,7 @@ function App() {
       .catch((error: unknown) => setLoadError(error instanceof Error ? error.message : String(error)));
     WorkspaceService.GetRuntimeStatus().then(setRuntimeStatus).catch(() => undefined);
     WorkspaceService.GetRuntimeLogs().then((logs)=>setRuntimeLogs(logs??[])).catch(() => undefined);
+    WorkspaceService.GetProfileState().then(setProfileState).catch((error:unknown)=>setLoadError(error instanceof Error?error.message:String(error)));
     const off = Events.On("core:runtime", (event) => {
       const payload = event.data as { type?: string; message?: string; snapshot?: { status: string; pid?: number; lastError?: string } };
       if (payload.type === "log" && payload.message) setRuntimeLogs((current) => [...current.slice(-1999), payload.message!]);
@@ -66,6 +77,8 @@ function App() {
   }, []);
 
   useEffect(()=>{if(workspace)setSettingsDraft(structuredClone(workspace.settings))},[workspace?.settings]);
+  useEffect(()=>{if(workspace)setMixedPortDraft(String(workspace.settings.baseListenPort))},[workspace?.settings.baseListenPort]);
+  useEffect(()=>{if(profileState&&(!selectedProfileID||!profileState.profiles?.some(profile=>profile.id===selectedProfileID)))setSelectedProfileID(profileState.activeProfileId)},[profileState,selectedProfileID]);
 
   const nodes = workspace?.nodes ?? [];
   const chains = workspace?.chains ?? [];
@@ -242,10 +255,58 @@ function App() {
     catch(error){setActionError(error instanceof Error?error.message:String(error))}finally{setSettingsBusy(false)}
   };
 
+  const saveMixedPort=async()=>{
+    if(!workspace)return;
+    const port=Number(mixedPortDraft);
+    if(!Number.isInteger(port)||port<1||port>65535){setMixedPortDraft(String(workspace.settings.baseListenPort));setActionError("Mixed port must be between 1 and 65535.");return}
+    if(port===workspace.settings.baseListenPort)return;
+    if(runtimeStatus.status!=="stopped"&&runtimeStatus.status!=="failed"){setMixedPortDraft(String(workspace.settings.baseListenPort));setActionError("Stop the core before changing the mixed listener port.");return}
+    try{const next=await WorkspaceService.UpdateSettings({...workspace.settings,baseListenPort:port});setWorkspace(next);setActionError(null);setImportMessage(`Mixed listener port changed to ${port}.`)}
+    catch(error){setMixedPortDraft(String(workspace.settings.baseListenPort));setActionError(error instanceof Error?error.message:String(error))}
+  };
+
   const browseCoreExecutable=async()=>{
     if(!settingsDraft)return;
     try{const coreName=settingsDraft.core.type.toLowerCase();const selectedPath=await WorkspaceService.PickCoreExecutable(coreName);if(!selectedPath)return;setSettingsDraft(current=>current?{...current,core:{...current.core,executables:{...(current.core.executables??{}),[coreName]:selectedPath}}}:current);setActionError(null)}
     catch(error){setActionError(error instanceof Error?error.message:String(error))}
+  };
+
+  const switchProfile=async(id:string)=>{
+    if(!profileState||id===profileState.activeProfileId)return;
+    setProfileBusy(true);
+    try{const [next,state]=await WorkspaceService.SwitchProfile(id);setWorkspace(next);setProfileState(state);setSelectedGroup("all");setFilter("");setActionError(null);setImportMessage(`Switched to profile ${state.profiles?.find(profile=>profile.id===id)?.name??id}.`)}
+    catch(error){setActionError(error instanceof Error?error.message:String(error))}finally{setProfileBusy(false)}
+  };
+
+  const openCreateProfile=()=>{setProfileNameDraft("");setProfileDialogMode("create")};
+  const openRenameProfile=()=>{const current=profileState?.profiles?.find(profile=>profile.id===selectedProfileID);if(!current)return;setProfileNameDraft(current.name);setProfileDialogMode("rename")};
+  const submitProfileDialog=async()=>{
+    const name=profileNameDraft.trim();if(!name)return;setProfileBusy(true);
+    try{if(profileDialogMode==="create"){const next=await WorkspaceService.CreateProfile(name);setProfileState(next);const created=next.profiles?.find(profile=>profile.name===name);if(created)setSelectedProfileID(created.id)}else if(profileDialogMode==="rename"){setProfileState(await WorkspaceService.RenameProfile(selectedProfileID,name))}setActionError(null);setProfileDialogMode(null);setProfileNameDraft("")}
+    catch(error){setActionError(error instanceof Error?error.message:String(error))}finally{setProfileBusy(false)}
+  };
+
+  const deleteProfile=async()=>{
+    const selected=profileState?.profiles?.find(profile=>profile.id===selectedProfileID);if(!selected||selected.id==="default"||selected.id===profileState?.activeProfileId)return;
+    if(!window.confirm(`Delete profile "${selected.name}" and all of its local workspace data? This cannot be undone.`))return;setProfileBusy(true);
+    try{setProfileState(await WorkspaceService.DeleteProfile(selected.id));setActionError(null)}catch(error){setActionError(error instanceof Error?error.message:String(error))}finally{setProfileBusy(false)}
+  };
+
+  const moveDataLocation=async()=>{
+    setProfileBusy(true);
+    try{const destination=await WorkspaceService.PickDataLocation();if(!destination||destination===profileState?.dataLocation)return;if(!window.confirm(`Move all ChainPort profiles and data to:\n${destination}\n\nThe current data folder will be retained as a backup.`))return;setProfileState(await WorkspaceService.MoveDataLocation(destination));setActionError(null);setImportMessage("Data copied and switched to the new location. The previous folder was retained as a backup.")}
+    catch(error){setActionError(error instanceof Error?error.message:String(error))}finally{setProfileBusy(false)}
+  };
+
+  const exportSettings=async()=>{try{await WorkspaceService.ExportSettings();setActionError(null)}catch(error){setActionError(error instanceof Error?error.message:String(error))}};
+  const importSettings=async()=>{setSettingsBusy(true);try{const next=await WorkspaceService.ImportSettings();if(!next.schemaVersion)return;setWorkspace(next);setSettingsDraft(structuredClone(next.settings));setActionError(null);setImportMessage("Settings imported successfully.")}catch(error){setActionError(error instanceof Error?error.message:String(error))}finally{setSettingsBusy(false)}};
+
+  const submitProfileBackup=async()=>{
+    if(backupPassword.length<12){setActionError("Backup password must contain at least 12 characters.");return}
+    if(backupDialogMode==="export"&&backupPassword!==backupPasswordConfirm){setActionError("Backup passwords do not match.");return}
+    setSettingsBusy(true);
+    try{if(backupDialogMode==="export"){const exported=await WorkspaceService.ExportProfileBackup(backupPassword);if(exported)setImportMessage("Encrypted profile backup exported.")}else{if(!window.confirm("Restore this backup over the active profile? Its current workspace will be replaced."))return;const next=await WorkspaceService.ImportProfileBackup(backupPassword);if(!next.schemaVersion){setBackupDialogMode(null);setBackupPassword("");setBackupPasswordConfirm("");return}setWorkspace(next);setSettingsDraft(structuredClone(next.settings));setImportMessage("Profile backup restored successfully.")}setActionError(null);setBackupDialogMode(null);setBackupPassword("");setBackupPasswordConfirm("")}
+    catch(error){setActionError(error instanceof Error?error.message:String(error))}finally{setSettingsBusy(false)}
   };
 
   const toggleCore = async () => {
@@ -292,7 +353,7 @@ function App() {
               <Tabs value={nodeView} onValueChange={(value) => setNodeView(String(value))} className="node-tabs">
                 <TabsList className="tabs-list"><TabsTrigger value="base" className="tab-trigger"><Network size={15} /> Base</TabsTrigger><TabsTrigger value="chain" className="tab-trigger"><Layers3 size={15} /> Chain</TabsTrigger></TabsList>
                 <TabsContent value="base" className="tab-panel">
-                  <div className="panel-heading"><div><h2>Base Nodes</h2><p>Single-hop endpoints from manual entries and subscription sources.</p></div><div className="panel-tools"><div className="search-wrap"><Search size={15} /><Input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter by name, address or protocol" /></div>{nodes.length===0&&subscriptions.length===0&&<Button variant="outline" onClick={()=>void importLegacyState()}>Import Legacy State</Button>}<Button variant="outline" onClick={()=>setSubscriptionManagerOpen(true)}><Rss size={14}/> Subscriptions…</Button></div></div>
+                  <div className="panel-heading"><div><h2>Base Nodes</h2><p>Single-hop endpoints from manual entries and subscription sources.</p></div><div className="panel-tools"><div className="search-wrap"><Search size={15} /><Input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter by name, address or protocol" /></div><label className="mixed-port-control"><span>Mixed port</span><Input aria-label="Mixed listener port" type="number" min={1} max={65535} value={mixedPortDraft} disabled={runtimeStatus.status!=="stopped"&&runtimeStatus.status!=="failed"} onChange={event=>setMixedPortDraft(event.target.value)} onBlur={()=>void saveMixedPort()} onKeyDown={event=>{if(event.key==="Enter")event.currentTarget.blur()}}/></label>{nodes.length===0&&subscriptions.length===0&&<Button variant="outline" onClick={()=>void importLegacyState()}>Import Legacy State</Button>}<Button variant="outline" onClick={()=>setSubscriptionManagerOpen(true)}><Rss size={14}/> Subscriptions…</Button></div></div>
                   <div className="node-group-bar" role="tablist" aria-label="Node groups"><div className="node-group-chips">{nodeGroups.map(group=><button key={group.id} className={`group-chip ${selectedGroup===group.id?"active":""}`} onClick={()=>setSelectedGroup(group.id)} onContextMenu={event=>{const customGroup=(workspace?.groups??[]).find(item=>item.id===group.id);const subscription=(workspace?.subscriptions??[]).find(item=>item.id===group.id);const isCustoms=group.id==="customs";const isAll=group.id==="all";if(!customGroup&&!subscription&&!isCustoms&&!isAll)return;event.preventDefault();event.stopPropagation();setContextMenu({kind:"group",group:{kind:isAll?"all":isCustoms?"customs":customGroup?"custom":"subscription",id:group.id,name:group.label},x:Math.max(8,Math.min(event.clientX,window.innerWidth-230)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-170))})}} role="tab" aria-selected={selectedGroup===group.id}>{group.label}<span>{group.count}</span></button>)}</div><Button size="sm" variant="outline" onClick={()=>setGroupManagerOpen(true)}><Plus size={14}/> Create Group</Button></div>
                   {loadError ? <div className="error-panel">Could not load workspace: {loadError}</div> : <Card className="table-card"><CardContent className="table-content"><Table className="data-table"><TableHeader><TableRow><TableHead>TYPE</TableHead><TableHead>REMARKS</TableHead><TableHead>ADDRESS</TableHead><TableHead>PORT</TableHead><TableHead>TRANSPORT</TableHead><TableHead>TLS</TableHead><TableHead>GROUP / SOURCE</TableHead><TableHead>ACTIVE</TableHead><TableHead>ACTIONS</TableHead></TableRow></TableHeader><TableBody>{visibleNodes.map(node=>{const source=subscriptions.find(item=>item.id===node.sourceId);const group=(workspace?.groups??[]).find(item=>item.id===node.groupId);const assignedSubscription=subscriptions.find(item=>item.id===node.groupId);const groupLabel=[group?.name,assignedSubscription?.name,source?.name??(node.sourceId?"Unknown source":null)].filter(Boolean).filter((value,index,array)=>array.indexOf(value)===index).join(" · ")||"Custom";return <TableRow key={node.id} data-active={workspace?.activeNodeId===node.id} onClick={()=>void setActiveNode(node.id)} onDoubleClick={()=>void openNodeEditor(node)} onContextMenu={event=>{event.preventDefault();event.stopPropagation();setContextMenu({kind:"node",node,x:Math.max(8,Math.min(event.clientX,window.innerWidth-220)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-230))})}} className="node-data-row"><TableCell><span className="protocol-pill">{node.protocol}</span></TableCell><TableCell className="cell-strong">{node.name}</TableCell><TableCell className="mono">{node.server}</TableCell><TableCell className="mono">{node.port}</TableCell><TableCell>{node.transport?.network||"tcp"}</TableCell><TableCell>{node.tls?.enabled?"TLS":"—"}</TableCell><TableCell>{groupLabel}</TableCell><TableCell>{workspace?.activeNodeId===node.id?<span className="active-node-pill"><Check size={12}/> Active</span>:"—"}</TableCell><TableCell><div className="row-actions"><Button size="icon-sm" variant="ghost" title="Edit node" aria-label={`Edit ${node.name}`} onClick={event=>{event.stopPropagation();void openNodeEditor(node)}}><Pencil size={14}/></Button><Button size="icon-sm" variant="ghost" title="Delete node" aria-label={`Delete ${node.name}`} className="node-delete-action" onClick={event=>{event.stopPropagation();void deleteNode(node.id)}}><Trash2 size={14}/></Button></div></TableCell></TableRow>})}</TableBody></Table>{visibleNodes.length===0&&<div className="empty-state"><div className="empty-icon"><Network size={22}/></div><strong>{filter?"No matching nodes":selectedGroup==="all"?"No Base Nodes yet":"This group has no nodes"}</strong><span>{filter?"Try a different search term.":"Add a node or import a subscription to get started."}</span></div>}</CardContent></Card>}
                 </TabsContent>
@@ -314,7 +375,6 @@ function App() {
                   </CardContent></Card>
                   <Card><CardHeader><CardTitle><Activity size={17}/> Shared Listener</CardTitle></CardHeader><CardContent>
                     <label className="form-label">Listen host<Input value={settingsDraft.baseListenHost} onChange={e=>setSettingsDraft({...settingsDraft,baseListenHost:e.target.value})}/></label>
-                    <label className="form-label">Base port<Input type="number" min={1} max={65535} value={settingsDraft.baseListenPort} onChange={e=>setSettingsDraft({...settingsDraft,baseListenPort:Number(e.target.value)})}/></label>
                     <label className="form-label">Remote DNS (HTTPS)<Input value={settingsDraft.network.remoteDNSUrl} onChange={e=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,remoteDNSUrl:e.target.value}})}/></label>
                     <label className="form-label">Bootstrap DNS<Input value={settingsDraft.network.bootstrapDNS} onChange={e=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,bootstrapDNS:e.target.value}})}/></label>
                   </CardContent></Card>
@@ -329,6 +389,25 @@ function App() {
                   <Card><CardHeader><CardTitle><Settings2 size={17}/> Application</CardTitle></CardHeader><CardContent>
                     {([ ["autoStart","Start core on application launch"],["runOnStartup","Run application on system startup"],["minimizeOnStart","Start minimized"],["closeToTray","Close to system tray"] ] as const).map(([key,label])=><label className="setting-toggle" key={key}><span>{label}</span><input type="checkbox" checked={settingsDraft[key]} onChange={e=>setSettingsDraft({...settingsDraft,[key]:e.target.checked})}/></label>)}
                     <p className="setting-note">Run on startup updates the per-user OS launch registration. Start-on-launch, minimize and tray behavior take effect the next time the application starts.</p>
+                  </CardContent></Card>
+                  <Card><CardHeader><CardTitle><Layers3 size={17}/> Profiles</CardTitle></CardHeader><CardContent>
+                    <p className="setting-note">Each profile has its own Nodes, Groups, Chains, subscriptions and settings.</p>
+                    <label className="form-label">Profile<Select value={selectedProfileID||(profileState?.activeProfileId??"default")} onValueChange={value=>setSelectedProfileID(String(value))} disabled={profileBusy||!profileState}><SelectTrigger className="native-select"><SelectValue placeholder="Select profile"/></SelectTrigger><SelectContent>{(profileState?.profiles??[]).map(profile=><SelectItem key={profile.id} value={profile.id}>{profile.name}{profile.id===profileState?.activeProfileId?" · Active":profile.id==="default"?" · Default":""}</SelectItem>)}</SelectContent></Select></label>
+                    <div className="row-actions"><Button type="button" variant="default" size="sm" onClick={()=>void switchProfile(selectedProfileID)} disabled={profileBusy||!profileState||selectedProfileID===profileState.activeProfileId}>Switch</Button><Button type="button" variant="outline" size="sm" onClick={openCreateProfile} disabled={profileBusy}> <Plus size={14}/> New</Button><Button type="button" variant="outline" size="sm" onClick={openRenameProfile} disabled={profileBusy}> <Pencil size={14}/> Rename</Button><Button type="button" variant="outline" size="sm" onClick={()=>void deleteProfile()} disabled={profileBusy||selectedProfileID==="default"||selectedProfileID===profileState?.activeProfileId}> <Trash2 size={14}/> Delete</Button></div>
+                    {selectedProfileID===profileState?.activeProfileId&&selectedProfileID!=="default"&&<p className="setting-note">Switch to another profile before deleting this one.</p>}
+                  </CardContent></Card>
+                  <Card><CardHeader><CardTitle><Database size={17}/> Data Location</CardTitle></CardHeader><CardContent>
+                    <p className="setting-note">All profiles and their SQLite databases are stored under this directory. Moving data stops the core, copies and verifies the data, then switches to the new location. The old folder is retained.</p>
+                    <label className="form-label">Profile data directory<Input value={profileState?.dataLocation??""} readOnly placeholder="Loading data location…"/></label>
+                    <Button type="button" variant="outline" onClick={()=>void moveDataLocation()} disabled={profileBusy||!profileState}><FolderOpen size={14}/> Move Data Location…</Button>
+                  </CardContent></Card>
+                  <Card><CardHeader><CardTitle><Download size={17}/> Settings Import / Export</CardTitle></CardHeader><CardContent>
+                    <p className="setting-note">Settings Only exports application and core preferences as JSON. It excludes Nodes, subscriptions and credentials; local executable paths and runtime directories remain on this computer.</p>
+                    <div className="row-actions"><Button type="button" variant="outline" onClick={()=>void exportSettings()} disabled={settingsBusy}><Download size={14}/> Export Settings</Button><Button type="button" variant="outline" onClick={()=>void importSettings()} disabled={settingsBusy}><Upload size={14}/> Import Settings</Button></div>
+                  </CardContent></Card>
+                  <Card><CardHeader><CardTitle><KeyRound size={17}/> Encrypted Profile Backup</CardTitle></CardHeader><CardContent>
+                    <p className="setting-note">Backs up the active profile, including Nodes, Chains, subscriptions and credentials. Credentials are encrypted with a password before the file is written.</p>
+                    <div className="row-actions"><Button type="button" variant="outline" onClick={()=>{setBackupDialogMode("export");setBackupPassword("");setBackupPasswordConfirm("")}} disabled={settingsBusy}><Download size={14}/> Export Backup</Button><Button type="button" variant="outline" onClick={()=>{setBackupDialogMode("import");setBackupPassword("");setBackupPasswordConfirm("")}} disabled={settingsBusy}><Upload size={14}/> Restore Backup</Button></div>
                   </CardContent></Card>
                 </div>
               </>}
@@ -365,6 +444,21 @@ function App() {
         <button onClick={()=>{setEditingChain(undefined);setEditorOpen(true);setContextMenu(null)}}><Plus size={14}/> Create Chain</button>
       </div>}
       <ChainEditorDialog open={editorOpen} nodes={nodes} chain={editingChain} listenPort={editingChain ? (workspace?.portBindings ?? []).find((binding) => binding.chainId === editingChain.id)?.listenPort : undefined} onOpenChange={setEditorOpen} onSave={saveChain} />
+      <Dialog open={profileDialogMode!==null} onOpenChange={open=>{if(!open){setProfileDialogMode(null);setProfileNameDraft("")}}}>
+        <DialogContent showCloseButton>
+          <div className="dialog-heading"><div><DialogTitle>{profileDialogMode==="create"?"Create Profile":"Rename Profile"}</DialogTitle><DialogDescription>{profileDialogMode==="create"?"Create an independent workspace with its own Nodes, Chains and subscriptions.":"Choose a new name for this profile."}</DialogDescription></div></div>
+          <label className="form-label">Profile name<Input autoFocus value={profileNameDraft} maxLength={128} onChange={event=>setProfileNameDraft(event.target.value)} placeholder="e.g. Work, Home, Travel" onKeyDown={event=>{if(event.key==="Enter")void submitProfileDialog()}}/></label>
+          <div className="dialog-actions"><Button variant="outline" onClick={()=>setProfileDialogMode(null)}>Cancel</Button><Button onClick={()=>void submitProfileDialog()} disabled={profileBusy||!profileNameDraft.trim()}>{profileBusy?"Saving…":profileDialogMode==="create"?"Create Profile":"Save Name"}</Button></div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={backupDialogMode!==null} onOpenChange={open=>{if(!open){setBackupDialogMode(null);setBackupPassword("");setBackupPasswordConfirm("")}}}>
+        <DialogContent showCloseButton>
+          <div className="dialog-heading"><div><DialogTitle>{backupDialogMode==="export"?"Export Encrypted Profile Backup":"Restore Encrypted Profile Backup"}</DialogTitle><DialogDescription>{backupDialogMode==="export"?"Choose a strong password. You will need it to restore this backup on this or another computer.":"Enter the password used when this profile backup was created."}</DialogDescription></div></div>
+          <label className="form-label">Backup password<Input type="password" autoComplete="new-password" value={backupPassword} onChange={event=>setBackupPassword(event.target.value)} placeholder="At least 12 characters"/></label>
+          {backupDialogMode==="export"&&<label className="form-label">Confirm password<Input type="password" autoComplete="new-password" value={backupPasswordConfirm} onChange={event=>setBackupPasswordConfirm(event.target.value)} placeholder="Re-enter backup password"/></label>}
+          <div className="dialog-actions"><Button variant="outline" onClick={()=>setBackupDialogMode(null)}>Cancel</Button><Button onClick={()=>void submitProfileBackup()} disabled={settingsBusy||backupPassword.length<12}>{settingsBusy?"Working…":backupDialogMode==="export"?"Export Backup":"Restore Profile"}</Button></div>
+        </DialogContent>
+      </Dialog>
       <NodeEditorDialog open={nodeEditorOpen} node={editingNode} groups={workspace?.groups??[]} subscriptions={subscriptions} credentials={editingNodeCredentials} initialGroupId={nodeEditorInitialGroupId} onOpenChange={open=>{setNodeEditorOpen(open);if(!open){setEditingNode(undefined);setNodeEditorInitialGroupId("");setEditingNodeCredentials({username:"",password:""})}}} onSave={saveNode} />
       <NodeGroupTransferDialog open={nodeTransfer!==null} mode={nodeTransfer?.mode??"move"} nodeName={nodeTransfer?.node.name??""} groups={[...(workspace?.groups??[]),{id:"__customs__",name:`${workspace?.settings.customNodesGroupName?.trim()||"Customs"} (ungrouped)`}]} onOpenChange={open=>{if(!open)setNodeTransfer(null)}} onConfirm={confirmNodeTransfer}/>
       <GroupManagerDialog open={groupManagerOpen} groups={workspace?.groups??[]} onOpenChange={setGroupManagerOpen} onCreate={createNodeGroup} onRename={renameNodeGroup} onDelete={deleteNodeGroup}/>

@@ -153,6 +153,42 @@ func TestGenerateAllCoreAdaptersWithOrderedChain(t *testing.T) {
 	}
 }
 
+func TestXrayBaseAndChainListenersUseMixedProtocol(t *testing.T) {
+	w, secrets := adapterWorkspace()
+	w.ActiveNodeID = "entry"
+	generated, err := GenerateConfig(context.Background(), w, "xray", secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(generated.Data, &config); err != nil {
+		t.Fatal(err)
+	}
+	inbounds := config["inbounds"].([]any)
+	for _, expected := range []struct {
+		tag  string
+		port float64
+	}{{"IN_BASE", float64(w.Settings.BaseListenPort)}, {"IN_23001", 23001}} {
+		var found map[string]any
+		for _, raw := range inbounds {
+			inbound := raw.(map[string]any)
+			if inbound["tag"] == expected.tag {
+				found = inbound
+				break
+			}
+		}
+		if found == nil {
+			t.Fatalf("missing Xray inbound %s: %+v", expected.tag, inbounds)
+		}
+		if found["protocol"] != "mixed" {
+			t.Fatalf("Xray inbound %s should accept SOCKS and HTTP on one port: %+v", expected.tag, found)
+		}
+		if found["port"] != expected.port {
+			t.Fatalf("Xray inbound %s port mismatch: %+v", expected.tag, found)
+		}
+	}
+}
+
 func TestGenerateAdaptersRejectUnsupportedXrayH2Transport(t *testing.T) {
 	w, secrets := adapterWorkspace()
 	w.Nodes[0].Transport.Network = "h2"

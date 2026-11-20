@@ -571,12 +571,12 @@ func generateXray(ctx context.Context, w domain.Workspace, secrets security.Secr
 	inbounds := []any{}
 	rules := []any{}
 	if w.ActiveNodeID != "" {
-		inbounds = append(inbounds, map[string]any{"listen": w.Settings.BaseListenHost, "port": w.Settings.BaseListenPort, "protocol": "socks", "tag": "IN_BASE", "settings": map[string]any{"auth": "noauth", "udp": w.Settings.Network.EnableUDP}, "sniffing": map[string]any{"enabled": w.Settings.Network.EnableSniffing, "destOverride": []string{"http", "tls"}}})
+		inbounds = append(inbounds, map[string]any{"listen": w.Settings.BaseListenHost, "port": w.Settings.BaseListenPort, "protocol": "mixed", "tag": "IN_BASE", "settings": map[string]any{"auth": "noauth", "udp": w.Settings.Network.EnableUDP}, "sniffing": map[string]any{"enabled": w.Settings.Network.EnableSniffing, "destOverride": []string{"http", "tls"}}})
 		rules = append(rules, map[string]any{"type": "field", "inboundTag": []string{"IN_BASE"}, "outboundTag": finalByID["__base__"]})
 	}
 	for _, binding := range w.PortBindings {
 		tag := fmt.Sprintf("IN_%d", binding.ListenPort)
-		inbounds = append(inbounds, map[string]any{"listen": binding.ListenHost, "port": binding.ListenPort, "protocol": "socks", "tag": tag, "settings": map[string]any{"auth": "noauth", "udp": w.Settings.Network.EnableUDP}})
+		inbounds = append(inbounds, map[string]any{"listen": binding.ListenHost, "port": binding.ListenPort, "protocol": "mixed", "tag": tag, "settings": map[string]any{"auth": "noauth", "udp": w.Settings.Network.EnableUDP}})
 		rules = append(rules, map[string]any{"type": "field", "inboundTag": []string{tag}, "outboundTag": finalByID[binding.ChainID]})
 	}
 	if w.TUN.Enabled {

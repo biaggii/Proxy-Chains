@@ -1,5 +1,19 @@
 # ChainPort Gateway
-
+只要一機，可以同時開，多端口,連接多proxy主機，鏈式連接，多開神器，養號，刷單一個搞掂
+vpn1 vpn2 vpn3 vpn4 -> 20001, 20003, 20004....　可同時連多個機場，影射出來多個端口。
+多口socks5，加一口mixed
+linux, windows, macos通用。　
+```
+git clone https://github.com/biaggii/Proxy-Chains.git
+cd go-wails3
+--liunx
+wails3 task linux:build
+./bin/chainport >/dev/null 2>&1 & disown
+--windows
+wails3 task windows:build
+--macos
+wails3 task macos:build
+```
 ChainPort Gateway is a cross-platform desktop control plane for importing proxy nodes, composing ordered multi-hop Chains, exposing local proxy listeners, and configuring one TUN route. The active implementation is **Go + Wails v3 + React + TypeScript + Vite + pnpm**.
 
 The external sing-box, Xray or Mihomo process provides the proxy data plane.

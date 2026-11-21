@@ -36,7 +36,7 @@ go test -race ./...
 go vet ./...
 pnpm --dir frontend run typecheck
 pnpm --dir frontend run build
-wails3 build
+wails3 task linux:build windows:build
 ./bin/chainport
 ```
 

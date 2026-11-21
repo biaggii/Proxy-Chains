@@ -144,9 +144,17 @@ func generateSingBox(ctx context.Context, w domain.Workspace, secrets security.S
 		if routeHasTCPOnlyUpstream(route) && wireguardAfterFirst(route) {
 			return nil, fmt.Errorf("WireGuard cannot be chained after a local TCP-only SOCKS upstream")
 		}
+		routeNetwork := w.Settings.Network
+		if len(route.Hops) > 1 {
+			// Multiplexing a later hop changes the transport framing inside the
+			// previous-hop tunnel. This breaks chained Shadowsocks in sing-box
+			// (TLS connections terminate with an unexpected EOF). Match
+			// v2rayN's native chained-outbound config: keep mux off for every hop.
+			routeNetwork.EnableMux = false
+		}
 		for i, node := range route.Hops {
 			tag := routeTag(route.ID, i+1)
-			ob, endpoint, err := singBoxOutbound(node, tag, w.Settings.Network)
+			ob, endpoint, err := singBoxOutbound(node, tag, routeNetwork)
 			if err != nil {
 				return nil, err
 			}
@@ -525,13 +533,17 @@ func generateXray(ctx context.Context, w domain.Workspace, secrets security.Secr
 		if routeHasTCPOnlyUpstream(route) && wireguardAfterFirst(route) {
 			return nil, fmt.Errorf("WireGuard cannot be chained after a local TCP-only SOCKS upstream")
 		}
+		routeNetwork := w.Settings.Network
+		if len(route.Hops) > 1 {
+			routeNetwork.EnableMux = false
+		}
 		finalTag := route.FinalTag
 		for i, node := range route.Hops {
 			if i > 0 && node.Domain.Protocol == domain.ProtocolWireGuard {
 				return nil, fmt.Errorf("Xray cannot place a WireGuard outbound after another Chain hop; place WireGuard first or use sing-box/Mihomo")
 			}
 			tag := routeTag(route.ID, i+1)
-			ob, err := xrayOutbound(node, tag, w.Settings.Network)
+			ob, err := xrayOutbound(node, tag, routeNetwork)
 			if err != nil {
 				return nil, err
 			}
@@ -906,8 +918,12 @@ func generateMihomo(ctx context.Context, w domain.Workspace, secrets security.Se
 		if routeHasTCPOnlyUpstream(route) && wireguardAfterFirst(route) {
 			return nil, fmt.Errorf("WireGuard cannot be chained after a local TCP-only SOCKS upstream")
 		}
+		routeNetwork := w.Settings.Network
+		if len(route.Hops) > 1 {
+			routeNetwork.EnableMux = false
+		}
 		for i, node := range route.Hops {
-			proxy, err := mihomoProxy(node, routeTag(route.ID, i+1), w.Settings.Network)
+			proxy, err := mihomoProxy(node, routeTag(route.ID, i+1), routeNetwork)
 			if err != nil {
 				return nil, err
 			}

@@ -98,6 +98,7 @@ func main() {
 		Assets:      application.AssetOptions{Handler: application.AssetFileServerFS(assets)},
 		Mac:         application.MacOptions{ApplicationShouldTerminateAfterLastWindowClosed: !(settings.CloseToTray || settings.MinimizeOnStart)},
 	})
+	service.ConfigureNodeTestEvents(workspaceService, func(result service.NodeTestResult) { app.Event.Emit("node:test", result) })
 
 	hiddenOnLaunch := settings.MinimizeOnStart
 	for _, argument := range os.Args[1:] {
@@ -142,7 +143,7 @@ func main() {
 			}()
 		}
 	})
-	app.OnShutdown(func() { _ = workspaceService.StopCore(); cancelApp() })
+	app.OnShutdown(func() { workspaceService.CancelNodeTests(); _ = workspaceService.StopCore(); cancelApp() })
 
 	if err := app.Run(); err != nil {
 		_ = workspaceService.StopCore()

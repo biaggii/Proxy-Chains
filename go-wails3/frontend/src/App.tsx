@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { Events } from "@wailsio/runtime";
-import { Activity, Check, CircleHelp, Copy, FileText, FolderInput, Layers3, Network, Pencil, Search, Settings2, Shield, ShieldCheck, SlidersHorizontal, Waypoints, Rss, Plus, Trash2, Edit3, Database, FolderOpen, Download, Upload, KeyRound } from "lucide-react";
+import { Activity, ArrowDown, ArrowUp, ArrowUpDown, Check, CircleHelp, Copy, FileText, FolderInput, Layers3, Network, Pencil, Search, Settings2, Shield, ShieldCheck, SlidersHorizontal, Waypoints, Rss, Plus, Trash2, Edit3, Database, FolderOpen, Download, Upload, KeyRound } from "lucide-react";
 import { WorkspaceService } from "../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/service";
 import { Protocol } from "../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/domain";
 import type { Chain, Node, Workspace } from "../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/domain";
 import type { State as ProfileState } from "../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/profiles";
+import type { NodeTestResult } from "../bindings/github.com/biaggii/Proxy-Chains/go-wails3/internal/service";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -36,7 +38,7 @@ function App() {
   const [groupManagerOpen,setGroupManagerOpen]=useState(false);
   const [subscriptionManagerOpen,setSubscriptionManagerOpen]=useState(false);
   const [contextMenu,setContextMenu]=useState<
-    | {kind:"node";node:Node;x:number;y:number}
+    | {kind:"node";node:Node;nodeIDs:string[];x:number;y:number}
     | {kind:"group";group:{kind:"all"|"custom"|"subscription"|"customs";id:string;name:string};x:number;y:number}
     | {kind:"chain";chain:Chain;x:number;y:number}
     | null
@@ -60,6 +62,10 @@ function App() {
   const [backupPassword,setBackupPassword]=useState("");
   const [backupPasswordConfirm,setBackupPasswordConfirm]=useState("");
   const [mixedPortDraft,setMixedPortDraft]=useState("10808");
+  const [selectedNodeIDs,setSelectedNodeIDs]=useState<Set<string>>(new Set());
+  const selectionAnchor=useRef<string|null>(null);
+  const [nodeTestResults,setNodeTestResults]=useState<Record<string,NodeTestResult>>({});
+  const [nodeSort,setNodeSort]=useState<{key:"tcpPing"|"group"|null;direction:"asc"|"desc"}>({key:null,direction:"asc"});
 
   useEffect(() => {
     WorkspaceService.GetWorkspace()
@@ -68,6 +74,7 @@ function App() {
     WorkspaceService.GetRuntimeStatus().then(setRuntimeStatus).catch(() => undefined);
     WorkspaceService.GetRuntimeLogs().then((logs)=>setRuntimeLogs(logs??[])).catch(() => undefined);
     WorkspaceService.GetProfileState().then(setProfileState).catch((error:unknown)=>setLoadError(error instanceof Error?error.message:String(error)));
+    WorkspaceService.GetNodeTestResults().then(results=>setNodeTestResults(Object.fromEntries((results??[]).map(result=>[result.nodeId+":"+result.testType,result])))).catch(()=>undefined);
     const off = Events.On("core:runtime", (event) => {
       const payload = event.data as { type?: string; message?: string; snapshot?: { status: string; pid?: number; lastError?: string } };
       if (payload.type === "log" && payload.message) setRuntimeLogs((current) => [...current.slice(-1999), payload.message!]);
@@ -75,6 +82,11 @@ function App() {
     });
     return off;
   }, []);
+
+  useEffect(()=>{
+    const off=Events.On("node:test",event=>{const result=event.data as NodeTestResult;setNodeTestResults(current=>({...current,[result.nodeId+":"+result.testType]:result}))});
+    return off;
+  },[]);
 
   useEffect(()=>{if(workspace)setSettingsDraft(structuredClone(workspace.settings))},[workspace?.settings]);
   useEffect(()=>{if(workspace)setMixedPortDraft(String(workspace.settings.baseListenPort))},[workspace?.settings.baseListenPort]);
@@ -89,17 +101,67 @@ function App() {
     ...(workspace?.groups??[]).map(group=>({id:group.id,label:group.name,count:nodes.filter(node=>node.groupId===group.id).length})),
     ...subscriptions.map(subscription=>({id:subscription.id,label:subscription.name,count:nodes.filter(node=>node.groupId===subscription.id||(node.sourceId===subscription.id&&(!node.groupId||node.groupId===subscription.id))).length})),
   ],[nodes,subscriptions,workspace?.groups]);
+  const getNodeGroupName=(node:Node)=>{
+    const group=(workspace?.groups??[]).find(item=>item.id===node.groupId);
+    const subscription=subscriptions.find(item=>item.id===node.groupId)||subscriptions.find(item=>item.id===node.sourceId);
+    return group?.name??subscription?.name??(node.sourceId?"Unknown source":"Custom");
+  };
   const visibleNodes = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase();
-    return nodes.filter(node=>{
+    const filtered=nodes.filter(node=>{
       const isSubscriptionGroup=subscriptions.some(subscription=>subscription.id===selectedGroup);
       const matchesGroup=selectedGroup==="all"||(selectedGroup==="customs"?!node.groupId&&(!node.sourceId||!subscriptions.some(sub=>sub.id===node.sourceId)):node.groupId===selectedGroup||(isSubscriptionGroup&&node.sourceId===selectedGroup&&(!node.groupId||node.groupId===selectedGroup)));
       const matchesQuery=!query||[node.name,node.server,node.protocol].some(value=>value.toLocaleLowerCase().includes(query));
       return matchesGroup&&matchesQuery;
     });
-  }, [filter, nodes, selectedGroup, subscriptions]);
+    if(nodeSort.key==="tcpPing"){
+      filtered.sort((a,b)=>{
+        const left=nodeTestResults[a.id+":tcp-ping"];
+        const right=nodeTestResults[b.id+":tcp-ping"];
+        const leftValue=left?.status==="success"?left.delayMs:Number.POSITIVE_INFINITY;
+        const rightValue=right?.status==="success"?right.delayMs:Number.POSITIVE_INFINITY;
+        if(!Number.isFinite(leftValue))return Number.isFinite(rightValue)?1:a.name.localeCompare(b.name);
+        if(!Number.isFinite(rightValue))return -1;
+        if(leftValue===rightValue)return a.name.localeCompare(b.name);
+        return (leftValue-rightValue)*(nodeSort.direction==="asc"?1:-1);
+      });
+    }else if(nodeSort.key==="group"){
+      filtered.sort((a,b)=>{
+        const compared=getNodeGroupName(a).localeCompare(getNodeGroupName(b),undefined,{numeric:true,sensitivity:"base"});
+        if(compared===0)return a.name.localeCompare(b.name);
+        return compared*(nodeSort.direction==="asc"?1:-1);
+      });
+    }
+    return filtered;
+  }, [filter, nodes, selectedGroup, subscriptions, workspace?.groups, nodeSort, nodeTestResults]);
+
+  const toggleNodeSort=(key:"tcpPing"|"group")=>{
+    setNodeSort(current=>current.key===key?{key,direction:current.direction==="asc"?"desc":"asc"}:{key,direction:"asc"});
+  };
+
+  const sortHeader=(label:string,key:"tcpPing"|"group")=><button type="button" className="table-sort-button" onClick={()=>toggleNodeSort(key)}>{label}{nodeSort.key===key?(nodeSort.direction==="asc"?<ArrowUp size={12}/>:<ArrowDown size={12}/>):<ArrowUpDown size={12}/>}</button>;
 
   useEffect(()=>{if(!nodeGroups.some(group=>group.id===selectedGroup))setSelectedGroup("all")},[nodeGroups,selectedGroup]);
+  useEffect(()=>{setSelectedNodeIDs(current=>new Set([...current].filter(id=>visibleNodes.some(node=>node.id===id))))},[visibleNodes]);
+
+  useEffect(()=>{
+    const keydown=(event:KeyboardEvent)=>{
+      if(section!=="nodes"||nodeView!=="base"||contextMenu||nodeEditorOpen||editorOpen||subscriptionManagerOpen)return;
+      const target=event.target as HTMLElement|null;
+      const tag=target?.tagName?.toLowerCase();
+      const editing=tag==="input"||tag==="textarea"||tag==="select"||Boolean(target?.isContentEditable);
+      if(editing)return;
+      if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="a"){
+        event.preventDefault();setSelectedNodeIDs(new Set(visibleNodes.map(node=>node.id)));selectionAnchor.current=visibleNodes[0]?.id??null;return;
+      }
+      if(event.key==="Escape"){setSelectedNodeIDs(new Set());selectionAnchor.current=null;return}
+      if(event.key==="Delete"||event.key==="Backspace"){
+        if(selectedNodeIDs.size){event.preventDefault();void deleteSelectedNodes([...selectedNodeIDs])}
+      }
+    };
+    document.addEventListener("keydown",keydown);
+    return()=>document.removeEventListener("keydown",keydown);
+  },[section,nodeView,contextMenu,nodeEditorOpen,editorOpen,subscriptionManagerOpen,visibleNodes,selectedNodeIDs]);
 
   useEffect(()=>{
     if(!contextMenu)return;
@@ -149,9 +211,43 @@ function App() {
   };
 
   const deleteNode=async(nodeID:string)=>{
-    if(!window.confirm("Delete this Base Node? Nodes used by a Chain cannot be deleted."))return;
-    try{setWorkspace(await WorkspaceService.DeleteNode(nodeID));setActionError(null)}catch(error){setActionError(error instanceof Error?error.message:String(error))}
+    await deleteSelectedNodes([nodeID]);
   };
+
+  const deleteSelectedNodes=async(nodeIDs:string[])=>{
+    const ids=[...new Set(nodeIDs)];if(!ids.length)return;
+    const label=ids.length===1?"this Base Node":ids.length+" selected Base Nodes";
+    if(!window.confirm("Delete "+label+"? Nodes used by a Chain cannot be deleted."))return;
+    try{setWorkspace(await WorkspaceService.DeleteNodes(ids));setSelectedNodeIDs(new Set());selectionAnchor.current=null;setContextMenu(null);setActionError(null)}
+    catch(error){setActionError(error instanceof Error?error.message:String(error))}
+  };
+
+  const selectNodeRow=(node:Node,index:number,event:ReactMouseEvent)=>{
+    const toggle=event.ctrlKey||event.metaKey;
+    if(event.shiftKey){
+      const anchorID=selectionAnchor.current??visibleNodes[0]?.id??node.id;
+      const anchorIndex=visibleNodes.findIndex(item=>item.id===anchorID);
+      const start=anchorIndex<0?0:anchorIndex;
+      const end=index;
+      const range=visibleNodes.slice(Math.min(start,end),Math.max(start,end)+1).map(item=>item.id);
+      setSelectedNodeIDs(current=>new Set(toggle?[...current,...range]:range));
+    }else if(toggle){
+      setSelectedNodeIDs(current=>{const next=new Set(current);if(next.has(node.id))next.delete(node.id);else next.add(node.id);return next});
+      selectionAnchor.current=node.id;
+    }else{
+      setSelectedNodeIDs(new Set([node.id]));
+      selectionAnchor.current=node.id;
+      void setActiveNode(node.id);
+    }
+  };
+
+  const runNodeTest=async(type:"tcp-ping"|"real-delay",nodeIDs:string[])=>{
+    const ids=[...new Set(nodeIDs)];if(!ids.length)return;setContextMenu(null);
+    try{if(type==="tcp-ping")await WorkspaceService.TestNodesTCPPing(ids);else await WorkspaceService.TestNodesRealDelay(ids);setActionError(null)}
+    catch(error){setActionError(error instanceof Error?error.message:String(error))}
+  };
+
+  const resultFor=(nodeID:string,type:"tcp-ping"|"real-delay")=>nodeTestResults[nodeID+":"+type];
 
   const deleteChain=async(chainID:string)=>{
     if(!window.confirm("Delete this Chain and its local port mapping?"))return;
@@ -349,13 +445,12 @@ function App() {
         <section className="main-content">
           {section === "nodes" ? (
             <>
-              <div className="page-heading"><div><div className="eyebrow">ROUTING WORKSPACE</div><h1>Node Groups</h1><p>Manage imported proxy nodes and reusable multi-hop chains.</p></div><div className="heading-metrics"><span><strong>{nodes.length}</strong> Base Nodes</span><span><strong>{chains.length}</strong> Chains</span></div></div>
               <Tabs value={nodeView} onValueChange={(value) => setNodeView(String(value))} className="node-tabs">
-                <TabsList className="tabs-list"><TabsTrigger value="base" className="tab-trigger"><Network size={15} /> Base</TabsTrigger><TabsTrigger value="chain" className="tab-trigger"><Layers3 size={15} /> Chain</TabsTrigger></TabsList>
+                <div className="page-heading nodes-page-heading"><div><div className="eyebrow">ROUTING WORKSPACE</div><h1>Node Groups</h1><p>Manage imported proxy nodes and reusable multi-hop chains.</p></div><div className="nodes-heading-actions"><div className="heading-metrics"><span><strong>{nodes.length}</strong> Base Nodes</span><span><strong>{chains.length}</strong> Chains</span></div><TabsList className="tabs-list"><TabsTrigger value="base" className="tab-trigger"><Network size={15} /> Base</TabsTrigger><TabsTrigger value="chain" className="tab-trigger"><Layers3 size={15} /> Chain</TabsTrigger></TabsList></div></div>
                 <TabsContent value="base" className="tab-panel">
-                  <div className="panel-heading"><div><h2>Base Nodes</h2><p>Single-hop endpoints from manual entries and subscription sources.</p></div><div className="panel-tools"><div className="search-wrap"><Search size={15} /><Input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter by name, address or protocol" /></div><label className="mixed-port-control"><span>Mixed port</span><Input aria-label="Mixed listener port" type="number" min={1} max={65535} value={mixedPortDraft} disabled={runtimeStatus.status!=="stopped"&&runtimeStatus.status!=="failed"} onChange={event=>setMixedPortDraft(event.target.value)} onBlur={()=>void saveMixedPort()} onKeyDown={event=>{if(event.key==="Enter")event.currentTarget.blur()}}/></label>{nodes.length===0&&subscriptions.length===0&&<Button variant="outline" onClick={()=>void importLegacyState()}>Import Legacy State</Button>}<Button variant="outline" onClick={()=>setSubscriptionManagerOpen(true)}><Rss size={14}/> Subscriptions…</Button></div></div>
-                  <div className="node-group-bar" role="tablist" aria-label="Node groups"><div className="node-group-chips">{nodeGroups.map(group=><button key={group.id} className={`group-chip ${selectedGroup===group.id?"active":""}`} onClick={()=>setSelectedGroup(group.id)} onContextMenu={event=>{const customGroup=(workspace?.groups??[]).find(item=>item.id===group.id);const subscription=(workspace?.subscriptions??[]).find(item=>item.id===group.id);const isCustoms=group.id==="customs";const isAll=group.id==="all";if(!customGroup&&!subscription&&!isCustoms&&!isAll)return;event.preventDefault();event.stopPropagation();setContextMenu({kind:"group",group:{kind:isAll?"all":isCustoms?"customs":customGroup?"custom":"subscription",id:group.id,name:group.label},x:Math.max(8,Math.min(event.clientX,window.innerWidth-230)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-170))})}} role="tab" aria-selected={selectedGroup===group.id}>{group.label}<span>{group.count}</span></button>)}</div><Button size="sm" variant="outline" onClick={()=>setGroupManagerOpen(true)}><Plus size={14}/> Create Group</Button></div>
-                  {loadError ? <div className="error-panel">Could not load workspace: {loadError}</div> : <Card className="table-card"><CardContent className="table-content"><Table className="data-table"><TableHeader><TableRow><TableHead>TYPE</TableHead><TableHead>REMARKS</TableHead><TableHead>ADDRESS</TableHead><TableHead>PORT</TableHead><TableHead>TRANSPORT</TableHead><TableHead>TLS</TableHead><TableHead>GROUP / SOURCE</TableHead><TableHead>ACTIVE</TableHead><TableHead>ACTIONS</TableHead></TableRow></TableHeader><TableBody>{visibleNodes.map(node=>{const source=subscriptions.find(item=>item.id===node.sourceId);const group=(workspace?.groups??[]).find(item=>item.id===node.groupId);const assignedSubscription=subscriptions.find(item=>item.id===node.groupId);const groupLabel=[group?.name,assignedSubscription?.name,source?.name??(node.sourceId?"Unknown source":null)].filter(Boolean).filter((value,index,array)=>array.indexOf(value)===index).join(" · ")||"Custom";return <TableRow key={node.id} data-active={workspace?.activeNodeId===node.id} onClick={()=>void setActiveNode(node.id)} onDoubleClick={()=>void openNodeEditor(node)} onContextMenu={event=>{event.preventDefault();event.stopPropagation();setContextMenu({kind:"node",node,x:Math.max(8,Math.min(event.clientX,window.innerWidth-220)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-230))})}} className="node-data-row"><TableCell><span className="protocol-pill">{node.protocol}</span></TableCell><TableCell className="cell-strong">{node.name}</TableCell><TableCell className="mono">{node.server}</TableCell><TableCell className="mono">{node.port}</TableCell><TableCell>{node.transport?.network||"tcp"}</TableCell><TableCell>{node.tls?.enabled?"TLS":"—"}</TableCell><TableCell>{groupLabel}</TableCell><TableCell>{workspace?.activeNodeId===node.id?<span className="active-node-pill"><Check size={12}/> Active</span>:"—"}</TableCell><TableCell><div className="row-actions"><Button size="icon-sm" variant="ghost" title="Edit node" aria-label={`Edit ${node.name}`} onClick={event=>{event.stopPropagation();void openNodeEditor(node)}}><Pencil size={14}/></Button><Button size="icon-sm" variant="ghost" title="Delete node" aria-label={`Delete ${node.name}`} className="node-delete-action" onClick={event=>{event.stopPropagation();void deleteNode(node.id)}}><Trash2 size={14}/></Button></div></TableCell></TableRow>})}</TableBody></Table>{visibleNodes.length===0&&<div className="empty-state"><div className="empty-icon"><Network size={22}/></div><strong>{filter?"No matching nodes":selectedGroup==="all"?"No Base Nodes yet":"This group has no nodes"}</strong><span>{filter?"Try a different search term.":"Add a node or import a subscription to get started."}</span></div>}</CardContent></Card>}
+                  <div className="panel-heading"><div className="panel-heading-copy"><h2>Base Nodes</h2><p>Single-hop endpoints from manual entries and subscription sources.</p></div><div className="panel-tools"><div className="search-wrap"><Search size={15} /><Input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter nodes…" /></div><label className="mixed-port-control"><span>Mixed</span><Input aria-label="Mixed listener port" type="number" min={1} max={65535} value={mixedPortDraft} disabled={runtimeStatus.status!=="stopped"&&runtimeStatus.status!=="failed"} onChange={event=>setMixedPortDraft(event.target.value)} onBlur={()=>void saveMixedPort()} onKeyDown={event=>{if(event.key==="Enter")event.currentTarget.blur()}}/></label>{nodes.length===0&&subscriptions.length===0&&<Button variant="outline" onClick={()=>void importLegacyState()}>Import Legacy State</Button>}<Button variant="outline" onClick={()=>setSubscriptionManagerOpen(true)}><Rss size={14}/> Subscriptions</Button></div></div>
+                  <div className="node-group-bar" role="tablist" aria-label="Node groups"><div className="node-group-chips">{nodeGroups.map(group=><button key={group.id} className={`group-chip ${selectedGroup===group.id?"active":""}`} onClick={()=>setSelectedGroup(group.id)} onContextMenu={event=>{const customGroup=(workspace?.groups??[]).find(item=>item.id===group.id);const subscription=(workspace?.subscriptions??[]).find(item=>item.id===group.id);const isCustoms=group.id==="customs";const isAll=group.id==="all";if(!customGroup&&!subscription&&!isCustoms&&!isAll)return;event.preventDefault();event.stopPropagation();setContextMenu({kind:"group",group:{kind:isAll?"all":isCustoms?"customs":customGroup?"custom":"subscription",id:group.id,name:group.label},x:Math.max(8,Math.min(event.clientX,window.innerWidth-230)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-170))})}} role="tab" aria-selected={selectedGroup===group.id}>{group.label}<span>{group.count}</span></button>)}</div><div className="node-list-actions">{selectedNodeIDs.size>0&&<><span className="selection-count">{selectedNodeIDs.size} selected</span><Button size="sm" variant="ghost" onClick={()=>{setSelectedNodeIDs(new Set());selectionAnchor.current=null}}>Clear</Button><Button size="sm" variant="destructive" onClick={()=>void deleteSelectedNodes([...selectedNodeIDs])}><Trash2 size={13}/> Delete</Button></>}{selectedNodeIDs.size===0&&<span className="selection-help">Ctrl/⌘ select · Shift range · Ctrl+A all · Del delete</span>}<Button size="sm" variant="outline" onClick={()=>setGroupManagerOpen(true)}><Plus size={14}/> Create Group</Button></div></div>
+                  {loadError ? <div className="error-panel">Could not load workspace: {loadError}</div> : <Card className="table-card node-list-card"><CardContent className="table-content"><Table className="data-table node-list-table"><TableHeader><TableRow><TableHead>TYPE</TableHead><TableHead>REMARKS</TableHead><TableHead>ADDRESS</TableHead><TableHead>PORT</TableHead><TableHead>TRANSPORT</TableHead><TableHead>TLS</TableHead><TableHead>{sortHeader("TCP PING","tcpPing")}</TableHead><TableHead>REAL DELAY</TableHead><TableHead>{sortHeader("GROUP / SOURCE","group")}</TableHead><TableHead>ACTIVE</TableHead><TableHead>ACTIONS</TableHead></TableRow></TableHeader><TableBody>{visibleNodes.map((node,index)=>{const source=subscriptions.find(item=>item.id===node.sourceId);const group=(workspace?.groups??[]).find(item=>item.id===node.groupId);const assignedSubscription=subscriptions.find(item=>item.id===node.groupId);const groupLabel=[group?.name,assignedSubscription?.name,source?.name??(node.sourceId?"Unknown source":null)].filter(Boolean).filter((value,index,array)=>array.indexOf(value)===index).join(" · ")||"Custom";const tcp=resultFor(node.id,"tcp-ping");const real=resultFor(node.id,"real-delay");const selected=selectedNodeIDs.has(node.id);return <TableRow key={node.id} data-active={workspace?.activeNodeId===node.id} data-selected={selected} aria-selected={selected} onClick={event=>selectNodeRow(node,index,event)} onDoubleClick={()=>void openNodeEditor(node)} onContextMenu={event=>{event.preventDefault();event.stopPropagation();const ids=selectedNodeIDs.has(node.id)?[...selectedNodeIDs]:[node.id];if(!selectedNodeIDs.has(node.id)){setSelectedNodeIDs(new Set([node.id]));selectionAnchor.current=node.id}setContextMenu({kind:"node",node,nodeIDs:ids,x:Math.max(8,Math.min(event.clientX,window.innerWidth-245)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-430))})}} className="node-data-row"><TableCell><span className="protocol-pill">{node.protocol}</span></TableCell><TableCell className="cell-strong">{node.name}</TableCell><TableCell className="mono">{node.server}</TableCell><TableCell className="mono">{node.port}</TableCell><TableCell>{node.transport?.network||"tcp"}</TableCell><TableCell>{node.tls?.enabled?"TLS":"—"}</TableCell><TableCell className="test-result-cell" title={tcp?.error??"TCP connection test"}>{tcp?.status==="testing"?"Testing…":tcp?.status==="success"?<span className="test-success">{tcp.delayMs} ms</span>:tcp?.status==="failed"?<span className="test-failed">-1 ms</span>:tcp?.status==="cancelled"?<span className="test-failed">Cancelled</span>:"—"}</TableCell><TableCell className="test-result-cell" title={real?.error??"HTTP request through this proxy"}>{real?.status==="testing"?"Testing…":real?.status==="success"?<span className="test-success">{real.delayMs} ms</span>:real?.status==="failed"?<span className="test-failed">-1 ms</span>:real?.status==="cancelled"?<span className="test-failed">Cancelled</span>:"—"}</TableCell><TableCell>{groupLabel}</TableCell><TableCell>{workspace?.activeNodeId===node.id?<span className="active-node-pill"><Check size={12}/> Active</span>:"—"}</TableCell><TableCell><div className="row-actions"><Button size="icon-sm" variant="ghost" title="Edit node" aria-label={`Edit ${node.name}`} onClick={event=>{event.stopPropagation();void openNodeEditor(node)}}><Pencil size={14}/></Button><Button size="icon-sm" variant="ghost" title="Delete node" aria-label={`Delete ${node.name}`} className="node-delete-action" onClick={event=>{event.stopPropagation();void deleteNode(node.id)}}><Trash2 size={14}/></Button></div></TableCell></TableRow>})}</TableBody></Table>{visibleNodes.length===0&&<div className="empty-state"><div className="empty-icon"><Network size={22}/></div><strong>{filter?"No matching nodes":selectedGroup==="all"?"No Base Nodes yet":"This group has no nodes"}</strong><span>{filter?"Try a different search term.":"Add a node or import a subscription to get started."}</span></div>}</CardContent></Card>}
                 </TabsContent>
                 <TabsContent value="chain" className="tab-panel">
                   <div className="panel-heading"><div><h2>Chain Nodes</h2><p>Compose ordered routes. Each saved Chain owns one local listener.</p></div><Button onClick={() => { setEditingChain(undefined); setEditorOpen(true); }} disabled={nodes.length === 0}>Create Chain</Button></div>
@@ -378,36 +473,34 @@ function App() {
                     <label className="form-label">Remote DNS (HTTPS)<Input value={settingsDraft.network.remoteDNSUrl} onChange={e=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,remoteDNSUrl:e.target.value}})}/></label>
                     <label className="form-label">Bootstrap DNS<Input value={settingsDraft.network.bootstrapDNS} onChange={e=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,bootstrapDNS:e.target.value}})}/></label>
                   </CardContent></Card>
-                  <Card><CardHeader><CardTitle><Shield size={17}/> Network Features</CardTitle></CardHeader><CardContent>
-                    {([ ["enableUDP","UDP forwarding"],["enableIPv6","IPv6"],["enableSniffing","Protocol sniffing"],["allowLAN","Allow LAN"],["enableMux","Multiplexing"],["allowInsecure","Allow insecure TLS"],["enableFragment","TLS fragmentation"],["enableFinalFragment","Final outbound fragmentation"],["blockQUIC","Block QUIC"] ] as const).map(([key,label])=><label className="setting-toggle" key={key}><span>{label}</span><input type="checkbox" checked={settingsDraft.network[key]} onChange={e=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,[key]:e.target.checked}})}/></label>)}
-                    <label className="form-label">sing-box mux protocol<Select value={settingsDraft.network.singboxMuxProtocol||"h2mux"} onValueChange={value=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,singboxMuxProtocol:String(value)}})}><SelectTrigger className="native-select"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="h2mux">h2mux</SelectItem><SelectItem value="smux">smux</SelectItem><SelectItem value="yamux">yamux</SelectItem></SelectContent></Select></label>
-                    <label className="form-label">Xray fragment packet mode<Select value={settingsDraft.network.xrayFragmentPackets||"tlshello"} onValueChange={value=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,xrayFragmentPackets:String(value)}})}><SelectTrigger className="native-select"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="tlshello">TLS Hello</SelectItem><SelectItem value="1-3">First 1–3 packets</SelectItem></SelectContent></Select></label>
-                    <label className="form-label">Xray fragment lengths<Input value={(settingsDraft.network.xrayFragmentLengths??[]).join(",")} onChange={e=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,xrayFragmentLengths:e.target.value.split(",").map(value=>value.trim()).filter(Boolean)}})} placeholder="50-100"/></label>
-                    <label className="form-label">Xray fragment delays (ms)<Input value={(settingsDraft.network.xrayFragmentDelays??[]).join(",")} onChange={e=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,xrayFragmentDelays:e.target.value.split(",").map(value=>value.trim()).filter(Boolean)}})} placeholder="10-20"/></label>
-                    <label className="form-label">Xray max split (optional)<Input type="number" min={0} max={64} value={settingsDraft.network.xrayFragmentMaxSplit??0} onChange={e=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,xrayFragmentMaxSplit:Number(e.target.value)}})}/></label>
+                  <Card><CardHeader className="compact-card-header"><CardTitle><Shield size={17}/> Network Features</CardTitle></CardHeader><CardContent>
+                    <div className="network-toggle-grid">
+                      {([ ["enableUDP","UDP forwarding"],["enableIPv6","IPv6"],["enableSniffing","Protocol sniffing"],["allowLAN","Allow LAN"],["enableMux","Multiplexing"],["allowInsecure","Allow insecure TLS"],["enableFragment","TLS fragmentation"],["enableFinalFragment","Final outbound fragmentation"],["blockQUIC","Block QUIC"] ] as const).map(([key,label])=><label className="setting-toggle compact-setting-toggle" key={key}><span>{label}</span><input type="checkbox" checked={settingsDraft.network[key]} onChange={e=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,[key]:e.target.checked}})}/></label>)}
+                    </div>
+                    <details className="advanced-network-settings"><summary>Advanced protocol settings</summary><div className="advanced-network-grid">
+                      <label className="form-label">sing-box mux protocol<Select value={settingsDraft.network.singboxMuxProtocol||"h2mux"} onValueChange={value=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,singboxMuxProtocol:String(value)}})}><SelectTrigger className="native-select"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="h2mux">h2mux</SelectItem><SelectItem value="smux">smux</SelectItem><SelectItem value="yamux">yamux</SelectItem></SelectContent></Select></label>
+                      <label className="form-label">Xray fragment packet mode<Select value={settingsDraft.network.xrayFragmentPackets||"tlshello"} onValueChange={value=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,xrayFragmentPackets:String(value)}})}><SelectTrigger className="native-select"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="tlshello">TLS Hello</SelectItem><SelectItem value="1-3">First 1–3 packets</SelectItem></SelectContent></Select></label>
+                      <label className="form-label">Xray fragment lengths<Input value={(settingsDraft.network.xrayFragmentLengths??[]).join(",")} onChange={e=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,xrayFragmentLengths:e.target.value.split(",").map(value=>value.trim()).filter(Boolean)}})} placeholder="50-100"/></label>
+                      <label className="form-label">Xray fragment delays (ms)<Input value={(settingsDraft.network.xrayFragmentDelays??[]).join(",")} onChange={e=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,xrayFragmentDelays:e.target.value.split(",").map(value=>value.trim()).filter(Boolean)}})} placeholder="10-20"/></label>
+                      <label className="form-label">Xray max split<Input type="number" min={0} max={64} value={settingsDraft.network.xrayFragmentMaxSplit??0} onChange={e=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,xrayFragmentMaxSplit:Number(e.target.value)}})}/></label>
+                      <label className="form-label">Real delay test URL<Input value={settingsDraft.network.speedPingTestUrl??"https://www.google.com/generate_204"} onChange={e=>setSettingsDraft({...settingsDraft,network:{...settingsDraft.network,speedPingTestUrl:e.target.value}})} placeholder="https://www.google.com/generate_204"/></label>
+                    </div></details>
                   </CardContent></Card>
-                  <Card><CardHeader><CardTitle><Settings2 size={17}/> Application</CardTitle></CardHeader><CardContent>
-                    {([ ["autoStart","Start core on application launch"],["runOnStartup","Run application on system startup"],["minimizeOnStart","Start minimized"],["closeToTray","Close to system tray"] ] as const).map(([key,label])=><label className="setting-toggle" key={key}><span>{label}</span><input type="checkbox" checked={settingsDraft[key]} onChange={e=>setSettingsDraft({...settingsDraft,[key]:e.target.checked})}/></label>)}
-                    <p className="setting-note">Run on startup updates the per-user OS launch registration. Start-on-launch, minimize and tray behavior take effect the next time the application starts.</p>
+                  <Card><CardHeader className="compact-card-header"><CardTitle><Settings2 size={17}/> Application</CardTitle></CardHeader><CardContent>
+                    <div className="application-toggle-grid">{([ ["autoStart","Start core on application launch"],["runOnStartup","Run application on system startup"],["minimizeOnStart","Start minimized"],["closeToTray","Close to system tray"] ] as const).map(([key,label])=><label className="setting-toggle compact-setting-toggle" key={key}><span>{label}</span><input type="checkbox" checked={settingsDraft[key]} onChange={e=>setSettingsDraft({...settingsDraft,[key]:e.target.checked})}/></label>)}</div>
+                    <p className="compact-setting-help">Startup registration and window behavior changes take effect on the next application launch.</p>
                   </CardContent></Card>
-                  <Card><CardHeader><CardTitle><Layers3 size={17}/> Profiles</CardTitle></CardHeader><CardContent>
-                    <p className="setting-note">Each profile has its own Nodes, Groups, Chains, subscriptions and settings.</p>
-                    <label className="form-label">Profile<Select value={selectedProfileID||(profileState?.activeProfileId??"default")} onValueChange={value=>setSelectedProfileID(String(value))} disabled={profileBusy||!profileState}><SelectTrigger className="native-select"><SelectValue placeholder="Select profile"/></SelectTrigger><SelectContent>{(profileState?.profiles??[]).map(profile=><SelectItem key={profile.id} value={profile.id}>{profile.name}{profile.id===profileState?.activeProfileId?" · Active":profile.id==="default"?" · Default":""}</SelectItem>)}</SelectContent></Select></label>
-                    <div className="row-actions"><Button type="button" variant="default" size="sm" onClick={()=>void switchProfile(selectedProfileID)} disabled={profileBusy||!profileState||selectedProfileID===profileState.activeProfileId}>Switch</Button><Button type="button" variant="outline" size="sm" onClick={openCreateProfile} disabled={profileBusy}> <Plus size={14}/> New</Button><Button type="button" variant="outline" size="sm" onClick={openRenameProfile} disabled={profileBusy}> <Pencil size={14}/> Rename</Button><Button type="button" variant="outline" size="sm" onClick={()=>void deleteProfile()} disabled={profileBusy||selectedProfileID==="default"||selectedProfileID===profileState?.activeProfileId}> <Trash2 size={14}/> Delete</Button></div>
-                    {selectedProfileID===profileState?.activeProfileId&&selectedProfileID!=="default"&&<p className="setting-note">Switch to another profile before deleting this one.</p>}
-                  </CardContent></Card>
-                  <Card><CardHeader><CardTitle><Database size={17}/> Data Location</CardTitle></CardHeader><CardContent>
-                    <p className="setting-note">All profiles and their SQLite databases are stored under this directory. Moving data stops the core, copies and verifies the data, then switches to the new location. The old folder is retained.</p>
-                    <label className="form-label">Profile data directory<Input value={profileState?.dataLocation??""} readOnly placeholder="Loading data location…"/></label>
-                    <Button type="button" variant="outline" onClick={()=>void moveDataLocation()} disabled={profileBusy||!profileState}><FolderOpen size={14}/> Move Data Location…</Button>
-                  </CardContent></Card>
-                  <Card><CardHeader><CardTitle><Download size={17}/> Settings Import / Export</CardTitle></CardHeader><CardContent>
-                    <p className="setting-note">Settings Only exports application and core preferences as JSON. It excludes Nodes, subscriptions and credentials; local executable paths and runtime directories remain on this computer.</p>
-                    <div className="row-actions"><Button type="button" variant="outline" onClick={()=>void exportSettings()} disabled={settingsBusy}><Download size={14}/> Export Settings</Button><Button type="button" variant="outline" onClick={()=>void importSettings()} disabled={settingsBusy}><Upload size={14}/> Import Settings</Button></div>
-                  </CardContent></Card>
-                  <Card><CardHeader><CardTitle><KeyRound size={17}/> Encrypted Profile Backup</CardTitle></CardHeader><CardContent>
-                    <p className="setting-note">Backs up the active profile, including Nodes, Chains, subscriptions and credentials. Credentials are encrypted with a password before the file is written.</p>
-                    <div className="row-actions"><Button type="button" variant="outline" onClick={()=>{setBackupDialogMode("export");setBackupPassword("");setBackupPasswordConfirm("")}} disabled={settingsBusy}><Download size={14}/> Export Backup</Button><Button type="button" variant="outline" onClick={()=>{setBackupDialogMode("import");setBackupPassword("");setBackupPasswordConfirm("")}} disabled={settingsBusy}><Upload size={14}/> Restore Backup</Button></div>
+                  <Card className="settings-management-card"><CardHeader className="compact-card-header"><CardTitle><Database size={17}/> Profiles, Data & Backup</CardTitle></CardHeader><CardContent>
+                    <div className="settings-management-grid">
+                      <section className="management-section"><div className="management-title"><Layers3 size={14}/> Profiles</div>
+                        <Select value={selectedProfileID||(profileState?.activeProfileId??"default")} onValueChange={value=>setSelectedProfileID(String(value))} disabled={profileBusy||!profileState}><SelectTrigger className="native-select"><SelectValue placeholder="Select profile"/></SelectTrigger><SelectContent>{(profileState?.profiles??[]).map(profile=><SelectItem key={profile.id} value={profile.id}>{profile.name}{profile.id===profileState?.activeProfileId?" · Active":profile.id==="default"?" · Default":""}</SelectItem>)}</SelectContent></Select>
+                        <div className="row-actions management-actions"><Button type="button" size="sm" onClick={()=>void switchProfile(selectedProfileID)} disabled={profileBusy||!profileState||selectedProfileID===profileState.activeProfileId}>Switch</Button><Button type="button" variant="outline" size="sm" onClick={openCreateProfile} disabled={profileBusy}>New</Button><Button type="button" variant="outline" size="sm" onClick={openRenameProfile} disabled={profileBusy}>Rename</Button><Button type="button" variant="outline" size="sm" onClick={()=>void deleteProfile()} disabled={profileBusy||selectedProfileID==="default"||selectedProfileID===profileState?.activeProfileId}>Delete</Button></div>
+                        {selectedProfileID===profileState?.activeProfileId&&selectedProfileID!=="default"&&<p className="management-hint">Switch away before deleting.</p>}
+                      </section>
+                      <section className="management-section"><div className="management-title"><FolderOpen size={14}/> Data Location</div><div className="data-location-value" title={profileState?.dataLocation}>{profileState?.dataLocation??"Loading…"}</div><Button type="button" variant="outline" size="sm" onClick={()=>void moveDataLocation()} disabled={profileBusy||!profileState}>Move data…</Button></section>
+                      <section className="management-section"><div className="management-title"><Download size={14}/> Settings JSON</div><p className="management-hint">Preferences only; no nodes or credentials.</p><div className="row-actions management-actions"><Button type="button" variant="outline" size="sm" onClick={()=>void exportSettings()} disabled={settingsBusy}><Download size={13}/> Export</Button><Button type="button" variant="outline" size="sm" onClick={()=>void importSettings()} disabled={settingsBusy}><Upload size={13}/> Import</Button></div></section>
+                      <section className="management-section"><div className="management-title"><KeyRound size={14}/> Full Profile Backup</div><p className="management-hint">Includes credentials; password encrypted.</p><div className="row-actions management-actions"><Button type="button" variant="outline" size="sm" onClick={()=>{setBackupDialogMode("export");setBackupPassword("");setBackupPasswordConfirm("")}} disabled={settingsBusy}><Download size={13}/> Backup</Button><Button type="button" variant="outline" size="sm" onClick={()=>{setBackupDialogMode("import");setBackupPassword("");setBackupPasswordConfirm("")}} disabled={settingsBusy}><Upload size={13}/> Restore</Button></div></section>
+                    </div>
                   </CardContent></Card>
                 </div>
               </>}
@@ -419,15 +512,12 @@ function App() {
         </section>
       </div>
       {contextMenu?.kind==="node"&&<div ref={contextMenuRef} className="node-context-menu" style={{left:contextMenu.x,top:contextMenu.y}} onContextMenu={event=>event.preventDefault()}>
-        <div className="context-menu-title">{contextMenu.node.name}</div>
-        <button onClick={()=>{void setActiveNode(contextMenu.node.id);setContextMenu(null)}}><Check size={14}/> Use as active node</button>
-        <button onClick={()=>{void bindNodeTUN(contextMenu.node.id);setContextMenu(null)}}><ShieldCheck size={14}/> Bind TUN to this node</button>
+        <div className="context-menu-title">{contextMenu.nodeIDs.length>1?contextMenu.nodeIDs.length+" selected Base Nodes":contextMenu.node.name}</div>
+        {contextMenu.nodeIDs.length===1&&<><button onClick={()=>{void setActiveNode(contextMenu.node.id);setContextMenu(null)}}><Check size={14}/> Set as active</button><button onClick={()=>{void bindNodeTUN(contextMenu.node.id);setContextMenu(null)}}><ShieldCheck size={14}/> Bind TUN to this node</button><div className="context-menu-separator"/><button onClick={()=>{void openNodeEditor(contextMenu.node);setContextMenu(null)}}><Edit3 size={14}/> Edit</button><button onClick={()=>{const node=contextMenu.node;setContextMenu(null);setNodeTransfer({node,mode:"copy"})}}><Copy size={14}/> Clone selected</button><button onClick={()=>{const node=contextMenu.node;setContextMenu(null);setNodeTransfer({node,mode:"move"})}}><FolderInput size={14}/> Move to…</button><div className="context-menu-separator"/></>}
+        <button onClick={()=>void runNodeTest("tcp-ping",contextMenu.nodeIDs)}><Activity size={14}/> Test TCP ping</button>
+        <button onClick={()=>void runNodeTest("real-delay",contextMenu.nodeIDs)}><Activity size={14}/> Test real delay</button>
         <div className="context-menu-separator"/>
-        <button onClick={()=>{void openNodeEditor(contextMenu.node);setContextMenu(null)}}><Edit3 size={14}/> Edit</button>
-        <button className="context-menu-danger" onClick={()=>{const id=contextMenu.node.id;setContextMenu(null);void deleteNode(id)}}><Trash2 size={14}/> Delete</button>
-        <div className="context-menu-separator"/>
-        <button onClick={()=>{const node=contextMenu.node;setContextMenu(null);setNodeTransfer({node,mode:"move"})}}><FolderInput size={14}/> Move to…</button>
-        <button onClick={()=>{const node=contextMenu.node;setContextMenu(null);setNodeTransfer({node,mode:"copy"})}}><Copy size={14}/> Copy to…</button>
+        <button className="context-menu-danger" onClick={()=>void deleteSelectedNodes(contextMenu.nodeIDs)}><Trash2 size={14}/> Delete {contextMenu.nodeIDs.length>1?"selected":"node"}</button>
       </div>}
       {contextMenu?.kind==="group"&&<div ref={contextMenuRef} className="node-context-menu" style={{left:contextMenu.x,top:contextMenu.y}} onContextMenu={event=>event.preventDefault()}>
         <div className="context-menu-title">{contextMenu.group.name}</div>

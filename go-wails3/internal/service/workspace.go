@@ -47,6 +47,11 @@ type WorkspaceService struct {
 	activeConfigPath        string
 	schedulerStarted        bool
 	refreshingSubscriptions map[string]*subscriptionRefreshCall
+	testMu                  sync.Mutex
+	testCancel              context.CancelFunc
+	testResults             map[string]NodeTestResult
+	testEmitter             func(NodeTestResult)
+	testRunID               uint64
 }
 
 type profileWorkspaceStore interface {
@@ -286,6 +291,7 @@ func (s *WorkspaceService) DeleteProfile(id string) (profiles.State, error) {
 }
 
 func (s *WorkspaceService) SwitchProfile(id string) (domain.Workspace, profiles.State, error) {
+	s.CancelNodeTests()
 	s.mu.RLock()
 	manager, ok := s.store.(profileWorkspaceStore)
 	refreshing := len(s.refreshingSubscriptions) > 0
@@ -327,6 +333,9 @@ func (s *WorkspaceService) SwitchProfile(id string) (domain.Workspace, profiles.
 		}
 	}
 	s.state = workspace
+	s.testMu.Lock()
+	s.testResults = map[string]NodeTestResult{}
+	s.testMu.Unlock()
 	s.configDir = profileRuntimeDir(manager.State().DataLocation, workspace.Settings)
 	return cloneWorkspace(workspace), manager.State(), nil
 }
@@ -1104,42 +1113,82 @@ func (s *WorkspaceService) CopyNodeToGroup(nodeID, groupID string) (domain.Works
 }
 
 func (s *WorkspaceService) DeleteNode(nodeID string) (domain.Workspace, error) {
+	return s.DeleteNodes([]string{nodeID})
+}
+
+func (s *WorkspaceService) DeleteNodes(nodeIDs []string) (domain.Workspace, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	candidate := cloneWorkspace(s.state)
-	index := -1
-	var removed domain.Node
-	for i, node := range candidate.Nodes {
-		if node.ID == nodeID {
-			index = i
-			removed = node
-			break
+	selected := map[string]bool{}
+	for _, id := range nodeIDs {
+		if strings.TrimSpace(id) != "" {
+			selected[id] = true
 		}
 	}
-	if index < 0 {
-		return domain.Workspace{}, fmt.Errorf("Base Node %q does not exist", nodeID)
+	if len(selected) == 0 {
+		return domain.Workspace{}, errors.New("select at least one Base Node to delete")
+	}
+	candidate := cloneWorkspace(s.state)
+	removed := make([]domain.Node, 0, len(selected))
+	found := map[string]bool{}
+	for _, node := range candidate.Nodes {
+		if selected[node.ID] {
+			removed = append(removed, node)
+			found[node.ID] = true
+		}
+	}
+	for id := range selected {
+		if !found[id] {
+			return domain.Workspace{}, fmt.Errorf("Base Node %q does not exist", id)
+		}
 	}
 	for _, chain := range candidate.Chains {
 		for _, hop := range chain.HopNodeIDs {
-			if hop == nodeID {
-				return domain.Workspace{}, fmt.Errorf("Base Node %q is used by Chain %q; remove it from the Chain first", removed.Name, chain.Name)
+			if selected[hop] {
+				for _, node := range removed {
+					if node.ID == hop {
+						return domain.Workspace{}, fmt.Errorf("Base Node %q is used by Chain %q; remove it from the Chain first", node.Name, chain.Name)
+					}
+				}
 			}
 		}
 	}
-	candidate.Nodes = append(candidate.Nodes[:index], candidate.Nodes[index+1:]...)
-	if candidate.ActiveNodeID == nodeID {
+	remaining := make([]domain.Node, 0, len(candidate.Nodes)-len(removed))
+	for _, node := range candidate.Nodes {
+		if !selected[node.ID] {
+			remaining = append(remaining, node)
+		}
+	}
+	candidate.Nodes = remaining
+	if selected[candidate.ActiveNodeID] {
 		candidate.ActiveNodeID = ""
 	}
-	if candidate.TUN.Kind == domain.TUNBindingNode && candidate.TUN.TargetID == nodeID {
+	if candidate.TUN.Kind == domain.TUNBindingNode && selected[candidate.TUN.TargetID] {
 		candidate.TUN = domain.TUNBinding{Kind: domain.TUNBindingNone}
 	}
 	result, err := s.commit(candidate)
 	if err == nil && s.secrets != nil {
-		for _, ref := range []string{removed.Credentials.UsernameRef, removed.Credentials.PasswordRef, removed.Credentials.UUIDRef, removed.Credentials.PrivateKeyRef, removed.SourceMetadataRef} {
+		refs := map[string]bool{}
+		for _, node := range removed {
+			for _, ref := range []string{node.Credentials.UsernameRef, node.Credentials.PasswordRef, node.Credentials.UUIDRef, node.Credentials.PrivateKeyRef, node.SourceMetadataRef} {
+				if ref != "" {
+					refs[ref] = true
+				}
+			}
+		}
+		for ref := range refs {
 			if ref != "" {
 				_ = s.secrets.Delete(context.Background(), ref)
 			}
 		}
+	}
+	if err == nil {
+		s.testMu.Lock()
+		for id := range selected {
+			delete(s.testResults, id+":"+NodeTestTCPPing)
+			delete(s.testResults, id+":"+NodeTestRealDelay)
+		}
+		s.testMu.Unlock()
 	}
 	return result, err
 }

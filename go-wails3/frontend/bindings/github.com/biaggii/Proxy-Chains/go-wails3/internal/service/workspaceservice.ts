@@ -30,6 +30,10 @@ export function BindTUNToChain(chainID: string): $CancellablePromise<domain$0.Wo
     return $Call.ByID(611991097, chainID);
 }
 
+export function CancelNodeTests(): $CancellablePromise<void> {
+    return $Call.ByID(304037680);
+}
+
 export function ClearRuntimeLogs(): $CancellablePromise<void> {
     return $Call.ByID(2248181501);
 }
@@ -79,6 +83,10 @@ export function DeleteNodeGroup(id: string): $CancellablePromise<domain$0.Worksp
     return $Call.ByID(701266749, id);
 }
 
+export function DeleteNodes(nodeIDs: string[] | null): $CancellablePromise<domain$0.Workspace> {
+    return $Call.ByID(3275933467, nodeIDs);
+}
+
 export function DeleteProfile(id: string): $CancellablePromise<profiles$0.State> {
     return $Call.ByID(2040442947, id);
 }
@@ -101,6 +109,10 @@ export function ExportSettings(): $CancellablePromise<void> {
  */
 export function GetNodeCredentials(nodeID: string): $CancellablePromise<$models.NodeCredentials> {
     return $Call.ByID(3977125331, nodeID);
+}
+
+export function GetNodeTestResults(): $CancellablePromise<$models.NodeTestResult[] | null> {
+    return $Call.ByID(3790324047);
 }
 
 export function GetProfileState(): $CancellablePromise<profiles$0.State> {
@@ -209,6 +221,14 @@ export function StopCore(): $CancellablePromise<void> {
 
 export function SwitchProfile(id: string): $CancellablePromise<[domain$0.Workspace, profiles$0.State]> {
     return $Call.ByID(1981659950, id);
+}
+
+export function TestNodesRealDelay(nodeIDs: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(2070945505, nodeIDs);
+}
+
+export function TestNodesTCPPing(nodeIDs: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(475329881, nodeIDs);
 }
 
 export function UpdateChain(input: $models.UpdateChainInput): $CancellablePromise<domain$0.Workspace> {

@@ -62,8 +62,8 @@ func TestGenerateAllCoreAdaptersWithOrderedChain(t *testing.T) {
 				if first["uuid"] != "entry-secret-uuid" {
 					t.Fatal("sing-box UUID secret was not resolved")
 				}
-				if first["multiplex"] == nil || first["tls"].(map[string]any)["fragment"] != true {
-					t.Fatal("sing-box mux/fragment settings missing")
+				if first["multiplex"] != nil || first["tls"].(map[string]any)["fragment"] != true {
+					t.Fatal("sing-box chained mux should be disabled while TLS fragment remains enabled")
 				}
 				if len(config["route"].(map[string]any)["rules"].([]any)) == 0 {
 					t.Fatal("sing-box routing rules missing")
@@ -108,8 +108,8 @@ func TestGenerateAllCoreAdaptersWithOrderedChain(t *testing.T) {
 					t.Fatalf("Xray dialer chain wrong: %+v", sock)
 				}
 				first := findMap(outbounds, "CHAIN_route_H1")
-				if first["mux"] == nil || config["dns"] == nil {
-					t.Fatal("Xray mux or DNS configuration missing")
+				if first["mux"] != nil || config["dns"] == nil {
+					t.Fatal("Xray chained mux should be disabled while DNS configuration remains enabled")
 				}
 				if first["streamSettings"].(map[string]any)["finalmask"] == nil {
 					t.Fatal("Xray TLS fragment mask missing")
@@ -138,8 +138,8 @@ func TestGenerateAllCoreAdaptersWithOrderedChain(t *testing.T) {
 					t.Fatalf("Mihomo dialer chain wrong: %s", generated.Data)
 				}
 				first := findMap(proxies, "CHAIN_route_H1")
-				if config["dns"] == nil || first["smux"] == nil {
-					t.Fatal("Mihomo DNS or mux configuration missing")
+				if config["dns"] == nil || first["smux"] != nil {
+					t.Fatal("Mihomo chained smux should be disabled while DNS configuration remains enabled")
 				}
 				dns := config["dns"].(map[string]any)
 				if !strings.Contains(dns["nameserver"].([]any)[0].(string), "#CHAIN_route_H2") {
@@ -150,6 +150,98 @@ func TestGenerateAllCoreAdaptersWithOrderedChain(t *testing.T) {
 				t.Fatal("credential reference leaked into core config")
 			}
 		})
+	}
+}
+
+func TestGenerateAdaptersDisableMultiplexForEveryHopInMultiHopChains(t *testing.T) {
+	w, secrets := adapterWorkspace()
+	w.Settings.Network.EnableMux = true
+	w.Nodes[1].Protocol = domain.ProtocolShadowsocks
+	w.Nodes[1].Cipher = "aes-256-gcm"
+	for _, coreName := range []string{"sing-box", "xray", "mihomo"} {
+		t.Run(coreName, func(t *testing.T) {
+			generated, err := GenerateConfig(context.Background(), w, coreName, secrets)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var first, second map[string]any
+			switch coreName {
+			case "sing-box":
+				var config map[string]any
+				if err := json.Unmarshal(generated.Data, &config); err != nil {
+					t.Fatal(err)
+				}
+				outbounds := config["outbounds"].([]any)
+				first, second = findMap(outbounds, "CHAIN_route_H1"), findMap(outbounds, "CHAIN_route_H2")
+				if first["multiplex"] != nil || second["multiplex"] != nil {
+					t.Fatalf("sing-box multiplex must be disabled on every chained hop: first=%+v second=%+v", first, second)
+				}
+			case "xray":
+				var config map[string]any
+				if err := json.Unmarshal(generated.Data, &config); err != nil {
+					t.Fatal(err)
+				}
+				outbounds := config["outbounds"].([]any)
+				first, second = findMap(outbounds, "CHAIN_route_H1"), findMap(outbounds, "CHAIN_route_H2")
+				if first["mux"] != nil || second["mux"] != nil {
+					t.Fatalf("Xray mux must be disabled on every chained hop: first=%+v second=%+v", first, second)
+				}
+			case "mihomo":
+				var config map[string]any
+				if err := yaml.Unmarshal(generated.Data, &config); err != nil {
+					t.Fatal(err)
+				}
+				proxies := config["proxies"].([]any)
+				first, second = findMap(proxies, "CHAIN_route_H1"), findMap(proxies, "CHAIN_route_H2")
+				if first["smux"] != nil || second["smux"] != nil {
+					t.Fatalf("Mihomo smux must be disabled on every chained hop: first=%+v second=%+v", first, second)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateAdaptersKeepMultiplexForSingleNodeBaseRoute(t *testing.T) {
+	w, secrets := adapterWorkspace()
+	w.Chains = nil
+	w.PortBindings = nil
+	w.ActiveNodeID = "entry"
+	w.Settings.Network.EnableMux = true
+	for _, coreName := range []string{"sing-box", "xray", "mihomo"} {
+		generated, err := GenerateConfig(context.Background(), w, coreName, secrets)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var outbound map[string]any
+		switch coreName {
+		case "sing-box":
+			var config map[string]any
+			if err := json.Unmarshal(generated.Data, &config); err != nil {
+				t.Fatal(err)
+			}
+			outbound = findMap(config["outbounds"].([]any), "CHAIN___base___H1")
+			if outbound["multiplex"] == nil {
+				t.Fatalf("sing-box base node should retain mux: %+v", outbound)
+			}
+		case "xray":
+			var config map[string]any
+			if err := json.Unmarshal(generated.Data, &config); err != nil {
+				t.Fatal(err)
+			}
+			outbound = findMap(config["outbounds"].([]any), "CHAIN___base___H1")
+			if outbound["mux"] == nil {
+				t.Fatalf("Xray base node should retain mux: %+v", outbound)
+			}
+		case "mihomo":
+			var config map[string]any
+			if err := yaml.Unmarshal(generated.Data, &config); err != nil {
+				t.Fatal(err)
+			}
+			outbound = findMap(config["proxies"].([]any), "CHAIN___base___H1")
+			if outbound["smux"] == nil {
+				t.Fatalf("Mihomo base node should retain smux: %+v", outbound)
+			}
+		}
 	}
 }
 

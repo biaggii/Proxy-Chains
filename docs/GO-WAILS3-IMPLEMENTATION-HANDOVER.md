@@ -141,6 +141,16 @@ The fix has regression tests for sing-box, Xray and Mihomo. Generated configurat
 - TUN is separate from local proxy listeners. It binds to one Base Node or one complete Chain. Keep process-loop prevention and private/loopback bypass rules ahead of the final TUN Chain fallback.
 - DNS bootstrap must not depend on the remote DoH hostname resolving through itself. Preserve the local_dns → direct_dns / hosts_dns bootstrap arrangement and route remote DNS through the selected Chain as designed.
 
+### v2rayN-compatible Chain routing and node tests — 2026-11-20
+
+- **Local → Chain → Internet:** local applications connect to the Chain's own loopback Mixed listener. The generated per-listener rule selects that Chain's final outbound. Each later hop's upstream connection is carried through the previous hop: sing-box uses `detour`, Xray uses `streamSettings.sockopt.dialerProxy`, and Mihomo uses `dialer-proxy`. This is the same native-core chaining model used by v2rayN's Xray chain generator; it is not an extra application-level SOCKS relay. The ordered-hop regression test asserts all three core-specific links.
+- **TCP Ping:** DNS is resolved before timing; the test measures a direct TCP connect to the resolved node endpoint, with a 5-second connect timeout.
+- **Real Delay:** selections are processed in batches of 10, with one temporary Core process per batch. Each selected node receives an independent local Mixed listener and a one-hop route. After listener readiness and a 1-second warm-up, the app sends two HTTP GET requests through that listener using SOCKS5, chooses the faster positive result, and retries a failed pair once after 500 ms. Each pair has a 10-second timeout; a failed Core batch is split into smaller batches down to individual nodes; concurrency is capped at 10 nodes. The HTTP(S) test URL is configurable in Settings → Network Features → Advanced protocol settings; the default is Google Generate 204.
+- The TCP Ping and Group / Source table headers sort ascending/descending. Failed or untested TCP Ping values are kept after successful numeric results.
+- Config generation and local SOCKS5 protocol tests do not prove the user's remote subscriptions work. Real-node end-to-end acceptance remains a desktop/network test.
+- Multiplexing is disabled on all outbounds in multi-hop routes for sing-box, Xray and Mihomo; standalone Base Node routes retain the configured mux. This is required for reliable chained transport. On the user's live sing-box 1.14.4 runtime, the ChainPort-generated two-hop SOCKS-to-Shadowsocks route failed HTTPS with TLS unexpected EOF when the Shadowsocks outbound had multiplex: yamux; the same generated config passed HTTP 204 when that single multiplex field was removed. Existing v2rayN chained config also had no mux on either hop.
+- Starting Real Delay now runs and publishes direct TCP Ping first, so the TCP Ping column is populated together with the Real Delay result.
+
 ## 7. Verification snapshot and remaining acceptance work
 
 For the 2026-11-19 local-routing change, the following checks passed:

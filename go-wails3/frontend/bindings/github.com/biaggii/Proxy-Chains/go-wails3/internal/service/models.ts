@@ -42,6 +42,15 @@ export interface NodeCredentials {
     "password"?: string;
 }
 
+export interface NodeTestResult {
+    "nodeId": string;
+    "testType": string;
+    "status": string;
+    "delayMs": number;
+    "error"?: string;
+    "updatedAt": string;
+}
+
 export interface UpdateChainInput {
     "id": string;
     "name": string;

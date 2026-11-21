@@ -141,6 +141,7 @@ type NetworkSettings struct {
 	BlockQUIC            bool     `json:"blockQUIC"`
 	RemoteDNSURL         string   `json:"remoteDNSUrl"`
 	BootstrapDNS         string   `json:"bootstrapDNS"`
+	SpeedPingTestURL     string   `json:"speedPingTestUrl,omitempty"`
 }
 
 type Settings struct {
@@ -177,7 +178,7 @@ func DefaultWorkspace() Workspace {
 			CustomNodesGroupName: "Customs",
 			BaseListenHost:       "127.0.0.1", BaseListenPort: 10808,
 			Core:        CoreSettings{Type: "sing-box", Executable: map[string]string{}, LogLevel: "warning"},
-			Network:     NetworkSettings{EnableUDP: true, EnableSniffing: true, BlockQUIC: true, SingboxMuxProtocol: "h2mux", RemoteDNSURL: "https://cloudflare-dns.com/dns-query", BootstrapDNS: "119.29.29.29"},
+			Network:     NetworkSettings{EnableUDP: true, EnableSniffing: true, BlockQUIC: true, SingboxMuxProtocol: "h2mux", RemoteDNSURL: "https://cloudflare-dns.com/dns-query", BootstrapDNS: "119.29.29.29", SpeedPingTestURL: "https://www.google.com/generate_204"},
 			CloseToTray: true,
 		},
 	}

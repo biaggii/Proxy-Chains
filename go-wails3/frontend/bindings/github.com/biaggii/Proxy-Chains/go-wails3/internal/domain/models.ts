@@ -40,6 +40,7 @@ export interface NetworkSettings {
     "blockQUIC": boolean;
     "remoteDNSUrl": string;
     "bootstrapDNS": string;
+    "speedPingTestUrl"?: string;
 }
 
 export interface Node {

@@ -5,7 +5,9 @@ go-wails3/frontend/node_modules/
 go-wails3/frontend/dist/
 go-wails3/.task/
 *.tsbuildinfo
-
+chainport_profile.json
+state.json
+.graphify*
 # Local tooling and editor state
 .codex/
 .agent/

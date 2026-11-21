@@ -11,6 +11,7 @@ export type {
     CreateNodeInput,
     CreateSubscriptionInput,
     NodeCredentials,
+    NodeTestResult,
     UpdateChainInput,
     UpdateNodeInput
 } from "./models.js";

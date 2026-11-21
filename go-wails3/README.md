@@ -43,6 +43,13 @@ Never edit generated bindings manually.
 - `internal/parser`: VMess, VLESS, Trojan, Shadowsocks, SOCKS/HTTP share links and Clash YAML parsing.
 - `internal/core`: sing-box, Xray and Mihomo configuration generation, ordered outbound chains, DNS and TUN route construction.
 - Base and per-Chain listeners accept SOCKS4/4a/5 and HTTP on one mixed-protocol port. The Base Mixed port is edited in the Base Nodes toolbar; stop the core before changing it.
+- Base Node list supports Ctrl/Command multi-select, Shift range selection without browser text highlighting, Ctrl/Command+A, Delete/Backspace and atomic batch deletion.
+- TCP Ping follows v2rayN's direct endpoint test: resolve the host first, then measure TCP connect time (5-second connect timeout; DNS time excluded).
+- Real Delay follows v2rayN's Core-backed test: process selections in batches of 10, generate one temporary Core config with a separate Mixed listener and one-node route per selected node, start one temporary Core for each batch, wait for listeners plus one second, then send two HTTP GET requests through each listener using SOCKS5. The faster positive result is shown. Each pair has a 10-second timeout; a failed pair is retried once after 500 ms. If a multi-node Core batch cannot start, it is split into smaller batches down to individual nodes. The test URL is configurable under Settings → Network Features → Advanced protocol settings. Up to 10 nodes are tested concurrently.
+- TCP Ping and Group / Source table headers are sortable in ascending/descending order. Failed or untested TCP Ping results remain at the bottom of the sorted list.
+- Running Real Delay also refreshes the direct TCP Ping column first, so both endpoint-connect latency and end-to-end proxy delay are visible together.
+- Multiplexing is disabled for every hop in multi-hop Chains (sing-box `multiplex`, Xray `mux`, Mihomo `smux`). It remains enabled for standalone Base Node routes. This avoids transport framing failures on chained Shadowsocks; a live test reproduced TLS EOF with sing-box yamux enabled and HTTP 204 success when only that mux option was removed.
+- Failed or timed-out tests display `-1 ms`; the row tooltip retains the failure reason. Shift-range selection disables native browser text selection so the table rows, not their text, are selected.
 - `internal/runtime`: core process supervisor, bounded/redacted logs and atomic private config writes.
 - `internal/migration`: legacy `state.json` importer with vault migration and Chain-wrapper expansion.
 - `internal/autostart` and `internal/tun`: per-OS startup registration and TUN privilege preflight.

@@ -1,5 +1,4 @@
 bin/
-build/
 node_modules/
 .task/
 .codex/
@@ -31,7 +30,6 @@ skills-lock.json
 # ---------- Build output ----------
 dist/
 *.tsbuildinfo
-build/
 
 # ---------- Local environments ----------
 venv/
